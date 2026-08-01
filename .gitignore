@@ -1,0 +1,48 @@
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+.terraform.lock.hcl
+crash.log
+crash.*.log
+
+# Python (Backend/Worker nếu dùng FastAPI)
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+*.env
+
+# Node.js (Backend nếu dùng Node, Frontend React)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+dist/
+build/
+.env
+.env.local
+
+# AI Model weights (dung lượng lớn, không commit trực tiếp — dùng S3/Git LFS nếu cần)
+worker/models/*.pt
+worker/models/*.onnx
+*.weights
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# AWS credentials (không bao giờ commit)
+.aws/
+*.pem
+*credentials*
+
+# Logs
+*.log
+logs/
