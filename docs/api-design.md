@@ -7,6 +7,7 @@
 ## 1. Nguyên tắc thiết kế chung
 
 - REST API, version hóa ngay từ đầu: tất cả endpoint có prefix `/v1/`
+- **Convention naming:** request/response DTO dùng **snake_case**; biến trong code TypeScript dùng **camelCase**. Mapping qua `ClassSerializerInterceptor` + `@Expose({ name: '...' })` của `class-transformer` (quyết định Q13)
 - Response format thống nhất dạng JSON, có wrapper chung để dễ xử lý lỗi ở frontend:
 ```json
 {
@@ -26,8 +27,9 @@
   }
 }
 ```
-- Auth: JWT Bearer Token, gửi qua header `Authorization: Bearer {token}`
-- Toàn bộ endpoint (trừ `/auth/*`) yêu cầu token hợp lệ
+- **Thứ tự interceptor bắt buộc** (quyết định D5): `ClassSerializerInterceptor` chạy **trước** (map camelCase → snake_case), `ResponseTransformInterceptor` bọc wrapper `{success, data, error}` **sau**. Endpoint `/health` được loại khỏi cả hai (ALB cần response phẳng)
+- Auth: JWT Bearer Token, gửi qua header `Authorization: Bearer {token}`, thuật toán **RS256** (asymmetric — quyết định Q33)
+- Toàn bộ endpoint (trừ `/auth/*` và `/health`) yêu cầu token hợp lệ
 - Dùng UUID cho toàn bộ resource ID, đồng bộ với Data Model
 
 ---
@@ -44,15 +46,16 @@ POST /v1/auth/logout    → vô hiệu hóa refresh_token hiện tại
 ```
 
 ### 2.2. Chi tiết token
-- `access_token`: JWT, thời hạn ngắn (ví dụ 15-30 phút), dùng cho mọi request
-- `refresh_token`: thời hạn dài hơn (ví dụ 7 ngày), lưu ở httpOnly cookie hoặc client storage an toàn, dùng để lấy access_token mới mà không cần đăng nhập lại
-- Payload JWT tối thiểu: `{ user_id, email, role, exp }`
+- `access_token`: JWT **RS256**, thời hạn ngắn (30 phút), dùng cho mọi request
+- `refresh_token`: thời hạn 7 ngày, **hash SHA-256 lưu vào bảng RDS `refresh_tokens`** để có thể revoke khi logout (quyết định Q12)
+- Payload JWT tối thiểu: `{ user_id, email, role, exp }` — dùng key **`user_id`** trong payload (quyết định Q14)
+- Keypair RS256 lưu ở Secrets Manager `matchlens-{env}-jwt-keypair-secret` dạng `{ private_key_pem, public_key_pem }` (quyết định D3)
 
 ### 2.3. Middleware xác thực
-Mọi endpoint (trừ auth) đi qua middleware kiểm tra:
+Mọi endpoint (trừ `/auth/*` và `/health`) đi qua guard kiểm tra:
 1. Token có tồn tại trong header không
-2. Token còn hạn, chữ ký hợp lệ không
-3. Gắn `user_id` vào context của request để dùng ở các bước xử lý tiếp theo (kiểm tra quyền sở hữu resource)
+2. Token còn hạn, chữ ký RS256 hợp lệ không (verify bằng public key)
+3. Gắn `user_id` từ payload vào **`request.user.id`** để controller/guard dùng syntax tự nhiên (quyết định Q14)
 
 ---
 
@@ -112,7 +115,40 @@ Mọi endpoint (trừ auth) đi qua middleware kiểm tra:
 ```
 **Response 200:** giống response của `/login` (cấp lại cặp token mới)
 
+**Xử lý phía Backend:** hash token nhận được → tra `refresh_tokens.token_hash` → kiểm tra `revoked_at IS NULL` và `expires_at > now()`. Cấp cặp token mới và **revoke token cũ** (rotation).
+
 **Lỗi có thể:** `INVALID_REFRESH_TOKEN` (401)
+
+---
+
+### `POST /v1/auth/logout`
+Revoke refresh token hiện tại (quyết định Q12 — cần bảng `refresh_tokens` để làm được việc này).
+
+**Request:**
+```json
+{ "refresh_token": "jwt-string" }
+```
+**Response 200:**
+```json
+{
+  "success": true,
+  "data": { "message": "Đăng xuất thành công" }
+}
+```
+**Xử lý:** set `revoked_at = now()` cho row tương ứng `token_hash`. Access token còn lại vẫn hợp lệ tới khi hết hạn (tối đa 30 phút) — đây là đánh đổi cố hữu của JWT stateless, chấp nhận được.
+
+**Lỗi có thể:** `INVALID_REFRESH_TOKEN` (401)
+
+---
+
+### `GET /health`
+Health check cho ALB Target Group và ECS container check (quyết định Q16). **Không có prefix `/v1/`**, không cần auth, **không bọc response wrapper**.
+
+**Response 200:**
+```json
+{ "status": "ok", "db": "up", "timestamp": "2026-08-03T10:00:00Z" }
+```
+Trả `503` nếu không kết nối được DB (`"db": "down"`) để ALB đưa task ra khỏi rotation.
 
 ---
 
@@ -231,29 +267,37 @@ Sinh presigned URL để client upload trực tiếp lên S3 (theo đúng luồn
 {
   "success": true,
   "data": {
-    "upload_url": "https://matchlens-dev-raw-videos.s3.amazonaws.com/...",
-    "s3_key": "raw-videos/{team_id}/{match_id}/original.mp4",
+    "upload_url": "https://matchlens-dev-raw-videos.s3.ap-southeast-1.amazonaws.com/...",
+    "s3_key": "{team_id}/{match_id}/original.mp4",
     "expires_in": 900
   }
 }
 ```
-**Validation ở backend trước khi cấp URL:**
-- `content_type` phải thuộc danh sách cho phép (`video/mp4`, `video/quicktime`...)
-- `file_size_bytes` không vượt giới hạn cấu hình (ví dụ tối đa 2GB)
 
-**Lỗi có thể:** `INVALID_FILE_TYPE` (400), `FILE_TOO_LARGE` (400)
+**Lưu ý `s3_key`:** format `{team_id}/{match_id}/original.mp4` — **không** có prefix `raw-videos/` lặp lại tên bucket (quyết định Q18).
+
+**Validation ở backend trước khi cấp URL** (quyết định Q28):
+- `content_type` phải thuộc danh sách: `video/mp4`, `video/quicktime`
+- `file_size_bytes` không vượt `2147483648` (2 GB)
+- Match phải đang ở trạng thái `pending` (không cấp URL cho match đã xử lý xong)
+
+**Rate limiting:** tối đa **10 request/phút/user** trên endpoint này (quyết định Q33, dùng `@nestjs/throttler`).
+
+**Lỗi có thể:** `INVALID_FILE_TYPE` (400), `FILE_TOO_LARGE` (400), `TOO_MANY_REQUESTS` (429)
 
 ---
 
 ### `POST /v1/matches/{match_id}/confirm-upload`
-Client gọi sau khi upload S3 thành công, để backend cập nhật `processing_status = "pending"` → thực tế bước này có thể không bắt buộc nếu dùng S3 Event Notification làm nguồn kích hoạt chính (theo System Flows), nhưng nên có để backend chủ động cập nhật UI ngay, không cần chờ event bất đồng bộ.
+Client gọi sau khi upload S3 thành công. **Bắt buộc giữ** (quyết định Q27) — đây là trigger chính xác cho transition `pending → uploaded`, do Backend ghi trực tiếp qua `prisma.write` nên phản hồi tức thì cho UI, không phải chờ event bất đồng bộ.
 
-**Response 200:** trả về match object với `processing_status` cập nhật.
+**Response 200:** trả về match object với `processing_status = "uploaded"`.
+
+**Lỗi có thể:** `INVALID_STATE_TRANSITION` (409) nếu match không ở trạng thái `pending`
 
 ---
 
 ### `GET /v1/matches/{match_id}/status`
-Endpoint polling trạng thái xử lý (theo đúng System Flows mục 3).
+Endpoint polling trạng thái xử lý.
 
 **Response 200:**
 ```json
@@ -262,18 +306,27 @@ Endpoint polling trạng thái xử lý (theo đúng System Flows mục 3).
   "data": {
     "match_id": "uuid",
     "processing_status": "processing",
+    "error_message": null,
     "progress_percent": 45
   }
 }
 ```
-`processing_status` nhận giá trị: `pending`, `processing`, `completed`, `failed`
+`processing_status` nhận **5 giá trị** (quyết định Q10): `pending`, `uploaded`, `processing`, `completed`, `failed`
 
-**Ghi chú:** `progress_percent` là optional, chỉ có nếu worker có báo cáo tiến độ chi tiết (không bắt buộc ở bản đầu tiên).
+| Giá trị | Ý nghĩa với người dùng |
+|---|---|
+| `pending` | Đã tạo trận, chưa upload video |
+| `uploaded` | Upload xong, đang chờ hệ thống nhận job |
+| `processing` | AI đang phân tích video |
+| `completed` | Xong, xem được highlight |
+| `failed` | Lỗi — `error_message` chứa lý do |
+
+**Ghi chú:** `progress_percent` là optional, chỉ có nếu worker báo tiến độ chi tiết (không bắt buộc ở bản đầu).
 
 ---
 
 ### `GET /v1/matches/{match_id}/highlights`
-Lấy danh sách highlight clip đã xử lý xong (dữ liệu nguồn từ DynamoDB `MatchEvents`).
+Lấy danh sách highlight clip đã xử lý xong (nguồn từ DynamoDB `matchlens-{env}-match-events`).
 
 **Response 200:**
 ```json
@@ -283,22 +336,28 @@ Lấy danh sách highlight clip đã xử lý xong (dữ liệu nguồn từ Dyn
     "match_id": "uuid",
     "highlights": [
       {
-        "event_id": "ulid-string",
+        "event_id": "0000000342500-9f2a1c7e4b",
         "event_type": "shot",
-        "timestamp_in_video": 342,
-        "clip_url": "https://cdn.matchlens.com/processed-highlights/...",
-        "confidence_score": 0.91
+        "timestamp_in_video": 342.5,
+        "clip_url": "https://cdn.matchlens.com/clips/...?Policy=...&Signature=...&Key-Pair-Id=...",
+        "confidence_score": 0.91,
+        "track_ids_involved": [1, 7]
       }
     ]
   }
 }
 ```
+
+**`clip_url` là CloudFront Signed URL** (quyết định Q23), hiệu lực **4 giờ**. S3 bucket private hoàn toàn, chỉ CloudFront truy cập qua OAC — bảo vệ video chiến thuật của đội bóng, đồng thời vẫn dùng được CDN cache.
+
+> ⚠️ **BẮT BUỘC:** Backend phải **filter bỏ** item có `event_id` bắt đầu bằng `"MARKER#"` khi query DynamoDB (quyết định D5) — đó là cờ idempotency của Worker, không phải highlight thật. Nếu quên, HLV sẽ thấy 1 clip rỗng không phát được.
+
 **Lỗi có thể:** `PROCESSING_NOT_COMPLETED` (409) nếu gọi khi `processing_status != "completed"`
 
 ---
 
 ### `GET /v1/matches/{match_id}/stats`
-Lấy chỉ số phân tích cầu thủ trong phạm vi trận đấu này (dữ liệu nguồn từ Athena/curated-data, backend query hộ hoặc cache lại kết quả).
+Chỉ số phân tích trong phạm vi trận đấu (nguồn từ Athena/curated-data). **Phase 6.**
 
 **Response 200:**
 ```json
@@ -306,18 +365,53 @@ Lấy chỉ số phân tích cầu thủ trong phạm vi trận đấu này (d�
   "success": true,
   "data": {
     "match_id": "uuid",
+    "grid_size": { "x": 10, "y": 6 },
+    "field_dimensions": { "length_m": 105, "width_m": 68 },
     "player_stats": [
       {
-        "player_id": "uuid",
+        "track_id": 1,
+        "player_id": "uuid-hoac-null",
+        "player_name": "Quang Hải",
+        "team_side": "home",
         "distance_covered_km": 8.4,
         "avg_speed_kmh": 7.2,
-        "heatmap_url": "https://cdn.matchlens.com/curated-data/.../heatmap.png"
+        "max_speed_kmh": 24.1,
+        "total_active_time_sec": 5280,
+        "heatmap": [
+          { "x": 5, "y": 3, "intensity": 85 }
+        ]
       }
     ]
   }
 }
 ```
+
+**Điểm quan trọng:**
+- **Khóa nhận diện là `track_id`**, không phải `player_id` (quyết định Q25) — v1 không OCR số áo. `player_id`/`player_name` lấy từ JOIN với bảng RDS `match_track_mappings`; `null` nếu HLV chưa gán
+- **Không có `heatmap_url` (PNG)** (quyết định Q31) — trả mảng số thô, React render bằng HTML5 Canvas đè lên hình sân. Không có thành phần nào trong hệ thống sinh ảnh
+- `heatmap[].x` ∈ [0, 9], `heatmap[].y` ∈ [0, 5] theo lưới **10 × 6** (quyết định Q32)
+
 **Lỗi có thể:** `STATS_NOT_AVAILABLE` (404) nếu Glue ETL Job chưa chạy xong cho trận này
+
+---
+
+### `PUT /v1/matches/{match_id}/track-mappings`
+Gán `track_id` → cầu thủ thật (quyết định Q25, D1). **Phase 6.**
+
+**Request:**
+```json
+{
+  "mappings": [
+    { "track_id": 1, "player_id": "uuid-cua-quang-hai" },
+    { "track_id": 7, "player_id": null }
+  ]
+}
+```
+**Response 200:** danh sách mapping sau khi cập nhật.
+
+**Validation:** `player_id` phải thuộc cùng team với match (chống gán cầu thủ của đội khác). `player_id: null` = bỏ gán.
+
+**Lỗi có thể:** `PLAYER_NOT_IN_TEAM` (400), `VALIDATION_ERROR` (400)
 
 ---
 
@@ -335,47 +429,69 @@ Xóa trận đấu — cần làm rõ khi thiết kế: có xóa luôn dữ li�
 
 ## 7. Bảng tổng hợp toàn bộ endpoint
 
-| Method | Endpoint | Mục đích | Auth |
-|---|---|---|---|
-| POST | /v1/auth/register | Đăng ký tài khoản | Không |
-| POST | /v1/auth/login | Đăng nhập | Không |
-| POST | /v1/auth/refresh | Làm mới token | Không (dùng refresh_token) |
-| POST | /v1/teams | Tạo đội | Có |
-| GET | /v1/teams | Danh sách đội của user | Có |
-| GET | /v1/teams/{team_id} | Chi tiết 1 đội | Có |
-| POST | /v1/teams/{team_id}/players | Thêm cầu thủ | Có |
-| GET | /v1/teams/{team_id}/players | Danh sách cầu thủ | Có |
-| PUT | /v1/teams/{team_id}/players/{player_id} | Cập nhật cầu thủ | Có |
-| DELETE | /v1/teams/{team_id}/players/{player_id} | Xóa cầu thủ | Có |
-| POST | /v1/teams/{team_id}/matches | Tạo trận đấu | Có |
-| GET | /v1/teams/{team_id}/matches | Danh sách trận đấu | Có |
-| POST | /v1/matches/{match_id}/upload-url | Lấy presigned URL upload video | Có |
-| POST | /v1/matches/{match_id}/confirm-upload | Xác nhận đã upload xong | Có |
-| GET | /v1/matches/{match_id}/status | Trạng thái xử lý | Có |
-| GET | /v1/matches/{match_id}/highlights | Danh sách highlight | Có |
-| GET | /v1/matches/{match_id}/stats | Chỉ số cầu thủ trong trận | Có |
-| DELETE | /v1/matches/{match_id} | Xóa trận đấu | Có |
+| Method | Endpoint | Mục đích | Auth | Phase |
+|---|---|---|---|---|
+| GET | /health | Health check cho ALB/ECS | Không | 0 |
+| POST | /v1/auth/register | Đăng ký tài khoản | Không | 0 |
+| POST | /v1/auth/login | Đăng nhập | Không | 0 |
+| POST | /v1/auth/refresh | Làm mới token (kèm rotation) | Không (dùng refresh_token) | 0 |
+| POST | /v1/auth/logout | Revoke refresh token | Có | 0 |
+| POST | /v1/teams | Tạo đội | Có | 0 |
+| GET | /v1/teams | Danh sách đội của user | Có | 0 |
+| GET | /v1/teams/{team_id} | Chi tiết 1 đội | Có | 0 |
+| POST | /v1/teams/{team_id}/players | Thêm cầu thủ | Có | 0 |
+| GET | /v1/teams/{team_id}/players | Danh sách cầu thủ | Có | 0 |
+| PUT | /v1/teams/{team_id}/players/{player_id} | Cập nhật cầu thủ | Có | 0 |
+| DELETE | /v1/teams/{team_id}/players/{player_id} | Xóa cầu thủ (soft-delete) | Có | 0 |
+| POST | /v1/teams/{team_id}/matches | Tạo trận đấu | Có | 0 |
+| GET | /v1/teams/{team_id}/matches | Danh sách trận đấu | Có | 0 |
+| POST | /v1/matches/{match_id}/upload-url | Lấy presigned URL upload video | Có | 1 |
+| POST | /v1/matches/{match_id}/confirm-upload | Xác nhận đã upload xong | Có | 1 |
+| GET | /v1/matches/{match_id}/status | Trạng thái xử lý | Có | 1 |
+| GET | /v1/matches/{match_id}/highlights | Danh sách highlight | Có | 1 |
+| GET | /v1/matches/{match_id}/stats | Chỉ số cầu thủ trong trận | Có | 6 |
+| PUT | /v1/matches/{match_id}/track-mappings | Gán track_id → cầu thủ | Có | 6 |
+| DELETE | /v1/matches/{match_id} | Xóa trận đấu (soft-delete) | Có | 1 |
 
 ---
 
 ## 8. Quy tắc phân quyền (Authorization) áp dụng chung
 
-- Mọi thao tác trên `team`, `player`, `match` đều phải kiểm tra resource đó có thuộc về `user_id` trong token hay không (qua `owner_id` của team)
-- Không cho phép user A truy cập dữ liệu của user B dù biết chính xác `team_id`/`match_id` (tránh lỗi IDOR — Insecure Direct Object Reference)
-- Việc kiểm tra này nên đặt thành middleware/dependency dùng chung, không viết lặp lại ở từng endpoint
+- Mọi thao tác trên `team`, `player`, `match` đều phải kiểm tra resource đó có thuộc về `request.user.id` trong token hay không (qua `owner_id` của team)
+- Không cho phép user A truy cập dữ liệu của user B dù biết chính xác `team_id`/`match_id` (chống IDOR)
+- Việc kiểm tra đặt thành **guard dùng chung** (`ResourceOwnershipGuard`), không viết lặp lại ở từng endpoint
+
+### 8.1. Guard cho endpoint có `:team_id` trong path
+Query `teams` theo `team_id`, so `team.owner_id` với `request.user.id`.
+
+### 8.2. Guard cho endpoint chỉ có `:match_id` (quyết định Q11)
+
+Áp dụng cho: `/matches/{match_id}/upload-url`, `/confirm-upload`, `/status`, `/highlights`, `/stats`, `/track-mappings`, `DELETE /matches/{match_id}`.
+
+1. Đọc `match_id` từ `request.params`
+2. Query bằng **`prisma.write` (Master client)** — **không** dùng `prisma.read`
+3. Lấy `match.team_id` → `team.owner_id`
+4. Cho qua nếu `team.owner_id === request.user.id` **hoặc** `request.user.role === 'admin'`
+5. Ngược lại → `403 FORBIDDEN`
+
+> **Lý do bắt buộc dùng Master:** kiểm tra phân quyền đọc từ Read Replica có replication lag sẽ gây `403` oan ngay sau khi user vừa tạo team/match. Đây là **ngoại lệ có chủ đích** của quy tắc "thao tác đọc dùng replica" ở `backend-architecture.md` mục 4.3.
 
 ---
 
-## 9. Câu hỏi còn mở — cần quyết định trước khi code
+## 9. Câu hỏi còn mở — ĐÃ CHỐT TOÀN BỘ
 
-- [ ] `confirm-upload` có thực sự cần thiết không, hay để hoàn toàn dựa vào S3 Event Notification để tránh phải đồng bộ 2 nguồn cập nhật trạng thái?
-- [ ] Endpoint `/stats` nên để backend real-time query Athena (chậm hơn, luôn mới nhất) hay cache kết quả vào RDS/DynamoDB sau khi Glue Job chạy xong (nhanh hơn, cần thêm bước đồng bộ)? — khuyến nghị cache lại để tránh gọi Athena trực tiếp từ request người dùng (Athena có độ trễ vài giây, không phù hợp gọi trong luồng request-response thông thường)
-- [ ] Có cần endpoint riêng để hủy/xóa 1 highlight clip cụ thể (nếu AI detect sai) không?
-- [ ] Rate-limiting cho endpoint `/upload-url` để tránh bị lạm dụng tạo nhiều presigned URL — nên áp dụng ở API Gateway hoặc Lambda, cần quyết định giới hạn cụ thể (ví dụ tối đa X lần/phút/user)
+| Câu hỏi | Quyết định | Mã ADR |
+|---|---|---|
+| `confirm-upload` có cần thiết? | **Bắt buộc giữ** — là trigger cho transition `pending → uploaded`, Backend ghi trực tiếp để UI phản hồi tức thì | Q27 |
+| `/stats` query Athena real-time hay cache? | **Cache** — Backend không gọi Athena trực tiếp trong luồng request-response (Athena có độ trễ vài giây). Cơ chế cache cụ thể chốt khi vào Phase 6 | — |
+| Có endpoint xóa 1 highlight clip cụ thể? | **Không** ở v1 — nếu AI detect sai, HLV bỏ qua clip đó. Có thể bổ sung sau nếu cần | — |
+| Rate-limit `/upload-url` bao nhiêu? | **10 req/phút/user**, áp dụng ở tầng NestJS (`@nestjs/throttler`) | Q33 |
+
+Chi tiết đầy đủ: `docs/decision-record.md`.
 
 ---
 
 ## 10. Việc cần làm tiếp theo
 
-Sau khi chốt API Design, bước tiếp theo trong giai đoạn thiết kế là **IAM & Security Design** (`docs/iam-matrix.md`) — vì giờ đã biết rõ backend cần thao tác với những resource nào (S3 bucket nào, DynamoDB table nào, RDS nào) để xây ma trận quyền least-privilege chính xác cho từng service.
+API Design này đã đồng bộ với `docs/decision-record.md`. Cấu trúc code NestJS tương ứng ở `docs/backend-architecture.md`; schema DB ở `docs/database-schema.md`; ma trận IAM ở `docs/iam-security-design.md`.
 

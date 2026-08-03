@@ -37,19 +37,20 @@ Mọi quyết định kiến trúc, schema, API, IAM, naming đã được thi�
 
 | Thứ tự | File | Nội dung |
 |---|---|---|
-| 1 | `docs/architecture.md` | Kiến trúc hạ tầng tổng thể, các layer, nguyên tắc kiến trúc bắt buộc tuân thủ |
-| 2 | `docs/system-flows.md` | Toàn bộ luồng hoạt động: auth, upload, xử lý AI bất đồng bộ, analytics, CI/CD, observability, DR |
-| 3 | `docs/data-model.md` | Schema RDS PostgreSQL (tổng quan), DynamoDB, cấu trúc S3 bucket |
-| 4 | `docs/database-schema.md` | **Đặc tả chi tiết cột/kiểu dữ liệu/ràng buộc từng bảng RDS + Prisma Schema mẫu — dùng trực tiếp để code migration** |
-| 5 | `docs/data-contracts.md` | **Schema chính xác SQS message, DynamoDB MatchEvents, JSON tracking data trên S3, Parquet curated-data — bắt buộc AI Worker và Glue ETL tuân thủ tuyệt đối** |
-| 6 | `docs/api-design.md` | Danh sách endpoint đầy đủ, request/response schema, auth flow |
-| 7 | `docs/backend-architecture.md` | **Cấu trúc module NestJS, cách xử lý Read Replica trong code, ví dụ code các service quan trọng** |
-| 8 | `docs/iam-security-design.md` | Ma trận IAM Role cho từng service, threat model, secrets management |
-| 9 | `docs/terraform-structure.md` | Cấu trúc module Terraform, thứ tự triển khai, quản lý state |
+| **0** | **`docs/decision-record.md`** | **⭐ ĐỌC TRƯỚC TIÊN — Architectural Decision Record (ADR): toàn bộ 34 quyết định đã chốt (Q1–Q34) + 5 quyết định hệ quả (D1–D5). Đây là NGUỒN CHÂN LÝ. Khi bất kỳ file nào khác mâu thuẫn với file này, file này thắng và file kia phải sửa lại** |
+| 1 | `docs/architecture.md` | Kiến trúc hạ tầng tổng thể (VPC 3-Tier), các layer, nguyên tắc kiến trúc bắt buộc tuân thủ |
+| 2 | `docs/system-flows.md` | Toàn bộ luồng hoạt động: auth, upload, xử lý AI bất đồng bộ, status callback, analytics, CI/CD, observability, DR |
+| 3 | `docs/data-model.md` | Schema RDS PostgreSQL (tổng quan), DynamoDB, cấu trúc 5 S3 bucket |
+| 4 | `docs/database-schema.md` | **Đặc tả chi tiết cột/kiểu/ràng buộc từng bảng RDS (6 bảng) + Prisma Schema mẫu + State Machine `matches.status` — dùng trực tiếp để code migration** |
+| 5 | `docs/data-contracts.md` | **Schema chính xác 2 loại SQS message, DynamoDB item, JSON tracking trên S3, Parquet curated-data — bắt buộc AI Worker và Glue ETL tuân thủ tuyệt đối** |
+| 6 | `docs/api-design.md` | 21 endpoint đầy đủ, request/response schema, auth flow RS256, quy tắc chống IDOR |
+| 7 | `docs/backend-architecture.md` | **Cấu trúc module NestJS, cách xử lý Read Replica trong code, 2 guard chống IDOR, thứ tự interceptor, ví dụ code các service quan trọng** |
+| 8 | `docs/iam-security-design.md` | Ma trận IAM cho 8 service/role, threat model, secrets management, checklist rà soát trước khi apply |
+| 9 | `docs/terraform-structure.md` | Cấu trúc 8 module Terraform + stub analytics, thứ tự triển khai, quản lý state |
 | 10 | `docs/naming-tagging-standard.md` | Chuẩn đặt tên và tag cho MỌI resource — bắt buộc tuân thủ tuyệt đối |
 | 11 | `docs/cicd-design.md` | Pipeline CI/CD, branching strategy, rollback strategy |
-| 12 | `docs/cost-estimate.md` | Ước tính chi phí, các biện pháp tối ưu cần áp dụng khi code hạ tầng |
-| 13 | `docs/roadmap.md` | **Roadmap triển khai chi tiết từng Phase, checklist task cụ thể và định nghĩa hoàn thành (Deliverable)** |
+| 12 | `docs/cost-estimate.md` | Ước tính chi phí, sàn cứng không giảm được, Budget $50/tháng, biện pháp tối ưu |
+| 13 | `docs/roadmap.md` | **Roadmap triển khai chi tiết từng Phase, checklist task cụ thể (đã map với mã ADR) và định nghĩa hoàn thành (Deliverable)** |
 
 Nếu còn file `.md` nào khác xuất hiện trong `docs/` ngoài danh sách trên, đọc luôn và coi là một phần của tài liệu thiết kế chính thức.
 
@@ -65,18 +66,20 @@ Nếu còn file `.md` nào khác xuất hiện trong `docs/` ngoài danh sách t
 
 | Layer | Công nghệ |
 |---|---|
-| Backend API | **NestJS (TypeScript) + pnpm + Prisma ORM** — chi tiết cấu trúc module tại `docs/backend-architecture.md` |
+| Backend API | **NestJS (TypeScript) + Node 22 + pnpm + Prisma ~6.0** — chi tiết cấu trúc module tại `docs/backend-architecture.md` |
 | Frontend | React (Vite) + TypeScript + pnpm |
-| AI Inference | Python 3.12 + YOLOv11 (Ultralytics), ONNX export nếu cần tối ưu tốc độ |
-| Database quan hệ | PostgreSQL (RDS) — Master + Standby (Multi-AZ) + Read Replica |
-| NoSQL | DynamoDB (bảng `MatchEvents`) |
-| Object Storage | S3 (4 bucket: raw-videos, processed-highlights, raw-tracking-data, curated-data) |
-| IaC | Terraform, module hóa theo `docs/terraform-structure.md` |
-| CI/CD | GitHub Actions, Amazon ECR, Trivy (image scan) — 2 pipeline build riêng cho Backend (Node.js) và Worker (Python) |
+| AI Inference | Python 3.12 + YOLOv11 (Ultralytics) + **ByteTrack/BoT-SORT** (sinh `track_id`) + **OpenCV** (homography), ONNX export nếu cần tối ưu |
+| Database quan hệ | PostgreSQL (RDS) — Master + Standby (Multi-AZ ở staging/prod) + Read Replica (**chỉ staging/prod**) |
+| NoSQL | DynamoDB (bảng `matchlens-{env}-match-events`) |
+| Object Storage | S3 (**5 bucket**: raw-videos, processed-highlights, raw-tracking-data, curated-data, athena-results) |
+| Serverless | Lambda × 3 (job-dispatcher, **status-updater** — duy nhất có RDS credential ngoài Backend, mediaconvert-trigger) |
+| IaC | Terraform `~> 1.9` + AWS Provider `~> 5.60`, **8 module** theo `docs/terraform-structure.md` |
+| CI/CD | GitHub Actions (OIDC, không dùng access key), Amazon ECR, Trivy — 2 pipeline build riêng cho Backend (Node.js) và Worker (Python) |
 | Container Orchestration | ECS Fargate |
-| Data & Analytics | AWS Glue, Amazon Athena, QuickSight |
-| Observability | CloudWatch, SNS |
-| Security | IAM least-privilege, Secrets Manager, Security Hub, AWS Config, GuardDuty, ACM |
+| Data & Analytics | AWS Glue, Amazon Athena, QuickSight (hoặc Streamlit) |
+| Observability | CloudWatch, SNS, AWS Budget, EventBridge (auto-shutdown dev) |
+| Security | IAM least-privilege, Secrets Manager (3 secret), CloudFront OAC + Signed URL, Security Hub, AWS Config, GuardDuty, ACM |
+| Region | `ap-southeast-1` (Singapore) |
 
 ---
 
@@ -95,6 +98,7 @@ MatchLens/
 │   └── MatchLens - Football Analytics Platform.drawio.png
 │
 ├── docs/                            # Tài liệu Solution Architecture — xem danh sách đầy đủ ở mục 3
+│   ├── decision-record.md           # ⭐ ADR — nguồn chân lý, đọc trước tiên
 │   ├── architecture.md
 │   ├── system-flows.md
 │   ├── data-model.md
@@ -106,76 +110,90 @@ MatchLens/
 │   ├── terraform-structure.md
 │   ├── naming-tagging-standard.md
 │   ├── cicd-design.md
-│   └── cost-estimate.md
+│   ├── cost-estimate.md
+│   └── roadmap.md
 │
 ├── knowledge/
 │   └── aws-glue.md                  # Sổ tay kiến thức chuyên đề AWS Glue Serverless
 │
-├── infra/                           # Hạ tầng AWS dưới dạng code (Terraform)
-│   ├── modules/
-│   │   ├── network/                 # VPC 3-Tier (Public, Private App, Private DB), NAT, IGW
+├── infra/                           # Hạ tầng AWS dưới dạng code (Terraform ~1.9, AWS Provider ~5.60)
+│   ├── modules/                     # 8 module + 1 stub
+│   │   ├── network/                 # VPC 3-Tier (Public, Private App, Private DB), NAT Instance, IGW, VPC Gateway Endpoint
 │   │   ├── compute/                 # ECS Fargate Cluster & Tasks, ALB, Auto Scaling
-│   │   ├── database/                # RDS PostgreSQL (Master, Standby, Read Replica) & DynamoDB
-│   │   ├── storage/                 # 4 S3 Buckets (Raw, Highlight, Tracking, Curated), CloudFront, WAF
-│   │   ├── messaging/                # SQS Queue, DLQ, Lambda Dispatcher
-│   │   ├── security/                 # IAM Roles least-privilege, ACM SSL/TLS, Secrets Manager
-│   │   └── observability/            # CloudWatch Dashboards, Alarms, SNS topic
+│   │   ├── database/                # RDS PostgreSQL (Master, Standby, Read Replica có điều kiện) & DynamoDB
+│   │   ├── storage/                 # 5 S3 Buckets, CloudFront + OAC + Key Group, WAF
+│   │   ├── messaging/               # 2 SQS Queue + 2 DLQ, 3 Lambda, S3 Event Notification
+│   │   ├── security/                # 8 IAM Role least-privilege, ACM, Secrets Manager (3 secret), Security Hub, Config, GuardDuty
+│   │   ├── observability/           # CloudWatch Dashboards, Alarms, SNS, AWS Budget, EventBridge auto-shutdown
+│   │   ├── cicd/                    # ECR repository, GitHub OIDC Provider
+│   │   └── analytics/               # STUB — chỉ có README, reserved cho Phase 6 (Glue/Athena/QuickSight)
 │   ├── environments/
 │   │   ├── dev/
 │   │   ├── staging/
 │   │   └── prod/
 │   └── global/
-│       └── bootstrap/               # Khởi tạo S3 Remote State & DynamoDB Lock
+│       └── bootstrap/               # S3 Remote State + DynamoDB Lock (chạy 1 lần)
 │
-├── backend/                         # API Backend Service (NestJS + TypeScript + pnpm)
+├── backend/                         # API Backend Service (NestJS + Node 22 + pnpm + Prisma 6)
 │   ├── src/
 │   │   ├── main.ts
 │   │   ├── app.module.ts
-│   │   ├── common/                  # Guards, Interceptors, Filters (chống IDOR, JWT auth)
+│   │   ├── common/                  # 2 Guard chống IDOR (team-ownership, match-ownership), Interceptors, Filters
 │   │   ├── config/                  # Validate biến môi trường bằng Joi
-│   │   ├── prisma/                  # Prisma Module & Service (quản lý kết nối Master & Read Replica)
-│   │   ├── aws/                     # Tích hợp S3 (Presigned URL), DynamoDB (MatchEvents)
-│   │   ├── auth/                    # Xử lý JWT Authentication & Bcrypt password
+│   │   ├── prisma/                  # Prisma Module & Service (2 PrismaClient: write/read)
+│   │   ├── aws/                     # S3 (Presigned URL), CloudFront (Signed URL), DynamoDB, Secrets Manager, Athena
+│   │   ├── health/                  # GET /health cho ALB & ECS health check
+│   │   ├── auth/                    # JWT RS256, Bcrypt, quản lý bảng refresh_tokens
 │   │   ├── users/                   # CRUD Người dùng / HLV
-│   │   ├── teams/                   # CRUD Đội bóng & Cầu thủ
-│   │   └── matches/                 # Cấp Presigned URL upload video & Quản lý trận đấu
+│   │   ├── teams/                   # CRUD Đội bóng
+│   │   ├── players/                 # CRUD Cầu thủ (module riêng)
+│   │   └── matches/                 # Presigned URL, quản lý trận, status-transition.ts, track-mappings
 │   ├── prisma/
-│   │   ├── schema.prisma            # Code mapping DB từ docs/database-schema.md
+│   │   ├── schema.prisma            # 6 model + enum MatchStatus, map từ docs/database-schema.md
 │   │   └── migrations/
 │   ├── test/
-│   ├── Dockerfile
+│   ├── Dockerfile                   # node:22-alpine, multi-stage
 │   ├── package.json
 │   └── pnpm-lock.yaml
 │
 ├── worker/                          # AI Processing Service (Python 3.12 + YOLOv11)
 │   ├── src/
-│   │   ├── main.py                  # Tiến trình chính: Polling SQS Queue
-│   │   ├── detector.py              # Logic nhận diện YOLOv11 (cầu thủ, bóng, sự kiện)
-│   │   ├── media.py                 # Gọi API MediaConvert transcode highlight
-│   │   ├── s3_writer.py             # Đóng gói batch 100-500 frames đẩy lên S3 tracking
-│   │   └── db_writer.py             # Ghi timestamp ULID sự kiện vào DynamoDB
+│   │   ├── main.py                  # Polling SQS + check MARKER#COMPLETED (idempotency)
+│   │   ├── detector.py              # YOLOv11 + ByteTrack/BoT-SORT sinh track_id
+│   │   ├── homography.py            # 4 anchor point + cv2.findHomography → position_field
+│   │   ├── s3_writer.py             # Batch 100-500 frames + schema_version + field_dimensions
+│   │   ├── db_writer.py             # event_id TẤT ĐỊNH + MARKER#COMPLETED ở bước cuối
+│   │   └── status_notifier.py       # Gửi callback vào SQS match-status-callbacks
 │   ├── models/                      # File weights YOLOv11 (.pt hoặc .onnx)
 │   ├── tests/
 │   ├── Dockerfile
 │   └── requirements.txt / pyproject.toml
 │
+├── lambdas/                         # Lambda function source (Python)
+│   ├── job_dispatcher/              # S3 Event → SQS video-processing-jobs + callback 'processing'
+│   ├── status_updater/              # SQS callback → UPDATE matches.status (DUY NHẤT có RDS credential ngoài Backend)
+│   │   └── transitions.py           # ⚠️ Phải khớp với backend/src/matches/status-transition.ts
+│   └── mediaconvert_trigger/        # S3 Event prefix raw-clips/ → MediaConvert CreateJob
+│
 ├── frontend/                        # Web App (React + Vite + TypeScript + pnpm)
 │   ├── src/
 │   │   ├── components/
-│   │   ├── pages/                   # Upload video, Danh sách trận, Dashboard thống kê
+│   │   ├── pages/                   # Upload video, Danh sách trận, Dashboard (heatmap Canvas)
 │   │   └── services/                # Axios/API client gọi Backend qua ALB
 │   ├── package.json
 │   └── pnpm-lock.yaml
 │
-├── etl/                              # AWS Glue Serverless Data Pipeline
-│   └── player_stats_job.py           # PySpark/Python: JSON -> Parquet & tính heatmap, quãng đường
+├── etl/                             # AWS Glue Serverless Data Pipeline
+│   └── player_stats_job.py          # PySpark: JSON → Parquet Hive-partition, tính heatmap 10×6, quãng đường
 │
-├── CLAUDE.md                         # File này
-├── README.md                         # Giới thiệu dự án cho CV & Portfolio
+├── CLAUDE.md                        # File này
+├── README.md                        # Giới thiệu dự án cho CV & Portfolio
 └── .gitignore
 ```
 
-**Lưu ý:** Cấu trúc `infra/` map trực tiếp với `docs/terraform-structure.md` — không tự ý đổi tên module hoặc thêm module ngoài danh sách đã thiết kế mà không cập nhật lại tài liệu thiết kế tương ứng trước.
+**Lưu ý:** cấu trúc `infra/` map trực tiếp với `docs/terraform-structure.md` — không tự ý đổi tên module hoặc thêm module ngoài danh sách đã thiết kế mà không cập nhật lại `docs/decision-record.md` và `docs/terraform-structure.md` trước.
+
+**Thư mục `lambdas/` là mới** so với thiết kế ban đầu, phát sinh từ quyết định Q20 (status callback) và Q21 (MediaConvert trigger) — xem `docs/decision-record.md`.
 
 ---
 
@@ -183,26 +201,29 @@ MatchLens/
 
 | Phase | Nội dung | Trạng thái |
 |---|---|---|
-| Design Phase | Toàn bộ 12 tài liệu thiết kế trong `docs/` + sơ đồ kiến trúc trong `diagrams/` | ✅ Hoàn thành |
-| Phase 0 | Nền tảng ứng dụng cơ bản: schema RDS, API CRUD team/match/player, hạ tầng VPC/ALB/ECS/RDS cơ bản | ⏳ Chưa bắt đầu |
-| Phase 1 | Highlight Engine: S3→SQS→Worker→YOLOv11→highlight clip, MediaConvert, CloudFront | ⏳ Chưa bắt đầu |
+| Design Phase | Toàn bộ tài liệu thiết kế trong `docs/` + sơ đồ kiến trúc trong `diagrams/` | ✅ Hoàn thành |
+| **Decision Record** | **Chốt toàn bộ 34 câu hỏi mở + 5 quyết định hệ quả, đồng bộ 13 file `docs/` (2026-08-03)** | ✅ **Hoàn thành** |
+| Phase 0 | Nền tảng ứng dụng cơ bản: schema RDS, API CRUD team/match/player, hạ tầng VPC 3-Tier/ALB/ECS/RDS cơ bản | ⏳ Sẵn sàng bắt đầu |
+| Phase 1 | Highlight Engine: S3→SQS→Worker→YOLOv11→highlight clip, MediaConvert, CloudFront Signed URL | ⏳ Chưa bắt đầu |
 | Phase 2 | Security & Governance: IAM least-privilege, Secrets Manager, Security Hub | ⏳ Chưa bắt đầu |
-| Phase 3 | CI/CD: GitHub Actions 3 môi trường, Trivy scan | ⏳ Chưa bắt đầu |
-| Phase 4 | Observability: CloudWatch Dashboard, Alarm, runbook | ⏳ Chưa bắt đầu |
+| Phase 3 | CI/CD: GitHub Actions 3 môi trường, Trivy scan, OIDC | ⏳ Chưa bắt đầu |
+| Phase 4 | Observability: CloudWatch Dashboard, Alarm (gồm alarm cho status-callback DLQ), runbook | ⏳ Chưa bắt đầu |
 | Phase 5 | Reliability & DR: RDS Multi-AZ, test restore, DR Plan | ⏳ Chưa bắt đầu |
-| Phase 6 | Performance Analytics (mở rộng v2): Glue ETL, Athena, QuickSight | ⏳ Chưa bắt đầu, chỉ làm sau khi Phase 0-5 ổn định |
-| Phase 7 | Cost Optimization & hoàn thiện portfolio | ⏳ Chưa bắt đầu |
+| Phase 6 | Performance Analytics (mở rộng v2): Glue ETL, Athena, track_id mapping, heatmap | ⏳ Chưa bắt đầu, chỉ làm sau khi Phase 0-5 ổn định |
+| Phase 7 | Cost Optimization (Budget $50, auto-shutdown dev) & hoàn thiện portfolio | ⏳ Chưa bắt đầu |
 
 **Thứ tự thực hiện Terraform module khi bắt đầu code hạ tầng** (chi tiết ở `docs/terraform-structure.md` mục 7):
 1. `infra/global/bootstrap/` (S3 backend + DynamoDB lock)
-2. `infra/modules/network/`
-3. `infra/modules/storage/`
+2. `infra/modules/network/` (VPC 3-Tier + VPC Gateway Endpoint)
+3. `infra/modules/storage/` (5 bucket)
 4. `infra/modules/database/`
-5. `infra/modules/messaging/`
-6. `infra/modules/security/`
+5. `infra/modules/security/` ⚠️ **đứng TRƯỚC messaging** — vì `messaging` cần role ARN để gắn vào 3 Lambda
+6. `infra/modules/messaging/`
 7. `infra/modules/compute/`
 8. `infra/modules/observability/`
-9. CI/CD workflow (`.github/workflows/`)
+9. `infra/modules/cicd/` + CI/CD workflow (`.github/workflows/`)
+
+Thứ tự này đã thay đổi so với bản thiết kế đầu (`security` trước `messaging`) để phá vỡ circular dependency phát sinh từ quyết định Q20 — xem `docs/decision-record.md`.
 
 ---
 
@@ -210,26 +231,37 @@ MatchLens/
 
 ### 7.1. Về hạ tầng (Terraform)
 - Mọi resource PHẢI đặt tên và gắn tag theo đúng `docs/naming-tagging-standard.md`, không tự sáng tạo pattern khác
-- Mọi IAM Role PHẢI theo đúng ma trận quyền trong `docs/iam-security-design.md` — không cấp quyền rộng hơn để "cho tiện", kể cả trong lúc test
+- Mọi IAM Role PHẢI theo đúng ma trận quyền trong `docs/iam-security-design.md` — không cấp quyền rộng hơn để "cho tiện", kể cả trong lúc test. Dùng checklist ở mục 8 của file đó trước khi apply
 - Không hardcode credential trong code hoặc Terraform — dùng Secrets Manager, đọc qua biến môi trường tại runtime
-- Environment `dev` dùng cấu hình tiết kiệm chi phí (RDS Single-AZ, NAT Instance, 1 NAT Instance dùng chung cả 2 AZ) theo `docs/cost-estimate.md`, không tự ý bật Multi-AZ/cấu hình đắt ở dev
+- Pin version: `required_version = "~> 1.9"`, `hashicorp/aws = "~> 5.60"` trong `versions.tf` của MỌI module
+- Environment `dev` dùng cấu hình tiết kiệm: **RDS Single-AZ, KHÔNG Read Replica vật lý, 1 NAT Instance** — theo `docs/cost-estimate.md`, không tự ý bật Multi-AZ/cấu hình đắt ở dev
+- **VPC Gateway Endpoint cho S3/DynamoDB là bắt buộc ngay Phase 0** (miễn phí, tránh phí NAT cho traffic video)
 
 ### 7.2. Về API/Backend
 - Endpoint PHẢI theo đúng danh sách và schema trong `docs/api-design.md`
-- Mọi endpoint (trừ `/auth/*`) PHẢI qua middleware/guard kiểm tra quyền sở hữu resource (chống IDOR) — xem `docs/api-design.md` mục 8 và `docs/backend-architecture.md` mục 7
+- Mọi endpoint (trừ `/auth/*` và `/health`) PHẢI qua guard kiểm tra quyền sở hữu resource (chống IDOR). **Có 2 guard riêng**: `TeamOwnershipGuard` (route có `:team_id`) và `MatchOwnershipGuard` (route chỉ có `:match_id`) — xem `docs/backend-architecture.md` mục 7
+- **Cả 2 guard PHẢI query qua `prisma.write` (Master)**, không dùng Replica — tránh 403 oan do replication lag
 - Upload video PHẢI qua presigned URL, Backend không xử lý file trực tiếp
-- Thao tác ghi luôn dùng Prisma Client trỏ Master, thao tác đọc tải cao dùng Prisma Client trỏ Read Replica — theo đúng quy tắc ở `docs/backend-architecture.md` mục 4
+- Thao tác ghi luôn dùng `prisma.write`, đọc tải cao dùng `prisma.read` — theo `docs/backend-architecture.md` mục 4.3
+- API DTO dùng **snake_case**, code TypeScript dùng **camelCase**, map qua `@Expose({ name })`
+- Backend chỉ được ghi 2 transition của `matches.status`: `→ pending` và `pending → uploaded`. Ba transition còn lại do Lambda `status-updater-fn`
+- `GET /highlights` PHẢI filter bỏ item DynamoDB có `event_id` bắt đầu bằng `MARKER#`
 
 ### 7.3. Về AI Worker
 - Worker chỉ nhận job qua SQS, không expose endpoint public
-- Phải thiết kế idempotent (kiểm tra job đã xử lý chưa trước khi ghi đè) để tránh xử lý trùng khi SQS redeliver message
-- Dữ liệu ghi ra DynamoDB/S3 PHẢI tuân thủ đúng 100% schema trong `docs/data-contracts.md`, không tự ý đổi cấu trúc field
+- **Idempotent bắt buộc**: kiểm tra `MARKER#COMPLETED` trong DynamoDB trước khi xử lý; ghi marker ở **bước cuối cùng** sau khi mọi dữ liệu đã ghi xong
+- **`event_id` PHẢI tất định** (`{ts_ms:013d}-{hash10}`), không dùng ULID random — nếu không, retry sẽ tạo highlight trùng
+- Dữ liệu ghi ra DynamoDB/S3 PHẢI tuân thủ đúng 100% schema trong `docs/data-contracts.md`, validate bằng `pydantic` trước khi ghi
+- Worker **KHÔNG** kết nối RDS, **KHÔNG** gọi MediaConvert. Cập nhật status qua SQS `match-status-callbacks`; transcode do Lambda riêng kích hoạt
+- Worker chỉ ghi clip vào prefix `raw-clips/`, tuyệt đối không ghi vào `clips/`
 
 ### 7.4. Về quy trình làm việc
+- **Đọc `docs/decision-record.md` trước tiên** ở mỗi phiên làm việc — đây là nguồn chân lý cho mọi quyết định đã chốt
 - Trước khi tạo code cho 1 phần hạ tầng/tính năng mới, đọc lại đúng file thiết kế tương ứng trong `docs/`
-- Nếu cần quyết định gì chưa có trong tài liệu thiết kế (xem các mục "Câu hỏi còn mở" ở cuối mỗi file thiết kế), hỏi người dùng trước khi tự quyết định và code
-- Sau khi hoàn thành 1 Phase, cập nhật trạng thái trong bảng Roadmap (mục 6 của file này)
-- Luôn tuân thủ quy tắc quyền hạn thao tác đã nêu ở mục 2 — đề xuất và hướng dẫn, không tự động thực thi trừ khi được cho phép rõ ràng
+- Nếu cần quyết định gì chưa có trong tài liệu, hỏi người dùng trước khi tự quyết định và code. Sau khi chốt, ghi vào `docs/decision-record.md` **trước**, rồi mới sửa file `docs/` liên quan, rồi mới code
+- Khi sửa `status-transition` logic, PHẢI sửa **cả 2 nơi**: `backend/src/matches/status-transition.ts` và `lambdas/status_updater/transitions.py`
+- Sau khi hoàn thành 1 Phase, cập nhật trạng thái ở bảng Roadmap (mục 6) VÀ tick checklist trong `docs/roadmap.md`
+- Luôn tuân thủ quy tắc quyền hạn thao tác ở mục 2 — đề xuất và hướng dẫn, không tự động thực thi trừ khi được cho phép rõ ràng
 
 ---
 

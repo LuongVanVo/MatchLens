@@ -22,18 +22,22 @@
 
 ## 2. Luồng upload video trận đấu (Video Upload Flow)
 
-1. HLV đã đăng nhập, tạo mới một trận đấu (match) qua Backend API — dữ liệu match được ghi vào **RDS**
-2. HLV chọn video để upload → Frontend gọi endpoint `POST /matches/{id}/upload-url`
+1. HLV đã đăng nhập, tạo mới một trận đấu (match) qua Backend API — ghi vào **RDS** với `status = 'pending'`
+2. HLV chọn video để upload → Frontend gọi `POST /v1/matches/{match_id}/upload-url`
 3. Request đi qua CloudFront → ALB → **Backend API Service**
-4. Backend **không nhận file trực tiếp** — chỉ tạo một **presigned URL** trỏ tới **S3 Bucket (raw-videos)** và trả về cho client (luồng "returns presigned URL")
-5. Client (trình duyệt của HLV) dùng presigned URL để **upload file thẳng lên S3**, không đi qua Backend hay ALB (luồng "uploads video directly using presigned URL")
-6. Sau khi upload thành công, S3 sinh ra **S3 Event Notification**
+4. Backend **không nhận file trực tiếp** — validate `content_type` (`video/mp4`, `video/quicktime`) và `file_size_bytes` (≤ 2GB), rate-limit 10 req/phút/user, rồi tạo **presigned URL** (TTL 900s) trỏ tới **S3 `raw-videos`** với key `{team_id}/{match_id}/original.mp4`
+5. Client dùng presigned URL để **upload file thẳng lên S3**, không đi qua Backend hay ALB
+6. Client gọi `POST /v1/matches/{match_id}/confirm-upload` → Backend ghi `status = 'uploaded'` qua `prisma.write` (đồng bộ, UI phản hồi tức thì — quyết định Q27)
+7. Song song, S3 sinh **S3 Event Notification** kích hoạt luồng xử lý AI (mục 3)
 
 **Lý do thiết kế:** tránh để Backend phải xử lý file video dung lượng lớn, giảm tải cho ECS service và chi phí truyền dữ liệu qua ALB.
 
+**Vì sao giữ `confirm-upload` dù đã có S3 Event:** `confirm-upload` cho UI biết ngay lập tức là upload đã xong (không phải chờ event bất đồng bộ), và là transition duy nhất Backend ghi trực tiếp trong luồng này. S3 Event chịu trách nhiệm phần sau (`uploaded → processing`).
+
 **Trường hợp lỗi:**
-- Presigned URL hết hạn trước khi upload xong → client cần gọi lại API để lấy URL mới
-- File không đúng định dạng/vượt kích thước cho phép → nên validate ở bước tạo presigned URL (giới hạn content-type, content-length) trước khi cấp URL
+- Presigned URL hết hạn trước khi upload xong → client gọi lại API để lấy URL mới
+- File không đúng định dạng/vượt kích thước → đã bị chặn ở bước 4 trước khi cấp URL
+- Client upload xong nhưng không gọi `confirm-upload` (mất mạng, đóng tab) → S3 Event vẫn kích hoạt pipeline, `status-updater-fn` sẽ ghi `processing`. Transition `uploaded → processing` không hợp lệ từ `pending` → Lambda ghi log cảnh báo và bỏ qua. **Cần xử lý:** cho phép `pending → processing` như transition dự phòng, hoặc Backend có job đối soát. Chốt ở Phase 1 khi code Lambda.
 
 ---
 
@@ -41,25 +45,56 @@
 
 Đây là luồng quan trọng nhất của hệ thống, xử lý hoàn toàn bất đồng bộ để không block người dùng.
 
-1. **S3 Event Notification** (từ bước upload) kích hoạt **Lambda (Job Dispatcher)**
-2. Lambda xác thực metadata cơ bản của video, tạo message mô tả job, đẩy vào **SQS Queue (video-processing-jobs)**
-3. **ECS Fargate – AI Worker Service** (đang chạy sẵn hoặc được scale lên theo độ dài queue) liên tục poll và consume job từ SQS
-4. Worker tải video từ S3 raw-videos, chạy inference bằng **YOLOv11** để phát hiện cầu thủ, bóng, và các sự kiện (sút, phạm lỗi, pha bóng nhanh)
-5. Sau khi xử lý xong, Worker ghi dữ liệu ra 3 nơi song song:
-   - **S3 Bucket (processed-highlights)**: các đoạn clip đã cắt theo sự kiện phát hiện được
-   - **DynamoDB (detection metadata)**: dữ liệu nhanh về sự kiện (loại sự kiện, timestamp, match_id) để truy vấn nhanh cho tính năng highlight
-   - **S3 Bucket (raw-tracking-data)**: toàn bộ dữ liệu tracking thô (tọa độ từng frame) để phục vụ phân tích sâu hơn sau này (dùng ở luồng Analytics)
-6. **AWS MediaConvert** lấy clip thô từ S3 processed-highlights, transcode sang định dạng chuẩn hóa (phù hợp phát trên nhiều thiết bị), ghi kết quả trở lại cùng bucket
-7. HLV mở lại trang trận đấu, gọi `GET /matches/{id}/highlights` → Backend truy vấn DynamoDB lấy danh sách clip → trả về link video
-8. Client phát video qua **CloudFront Origin 2**, lấy nội dung trực tiếp từ S3 processed-highlights (đã qua MediaConvert)
+1. **S3 Event Notification** (từ bước upload, prefix `{team_id}/{match_id}/`) kích hoạt **Lambda Job Dispatcher**
+2. Lambda xác thực metadata cơ bản của video, đẩy message vào **SQS `video-processing-jobs`** (schema: `data-contracts.md` mục 1), và gửi callback `{status: "processing"}` vào **SQS `match-status-callbacks`**
+3. **ECS Fargate – AI Worker Service** (autoscale theo độ dài queue, về 0 khi rỗng) poll và consume job
+4. **Kiểm tra idempotency trước khi xử lý** (quyết định Q22): `GetItem(match_id, "MARKER#COMPLETED")` trên DynamoDB
+   - Nếu **tồn tại** → job đã hoàn thành trước đó (SQS redeliver) → xóa message, kết thúc, **không xử lý lại**
+   - Nếu **không tồn tại** → tiếp tục bước 5
+5. Worker tải video từ S3, chạy inference **YOLOv11 + tracker (ByteTrack/BoT-SORT)** để phát hiện cầu thủ, bóng, sự kiện, và sinh `track_id` bền vững cho từng cầu thủ
+6. Worker ghi dữ liệu ra 3 nơi:
+   - **S3 `processed-highlights`, prefix `raw-clips/{team_id}/{match_id}/{event_id}.mp4`**: clip thô đã cắt
+   - **DynamoDB `match-events`**: 1 item/sự kiện, `event_id` **tất định** (không phải ULID random) nên retry overwrite an toàn
+   - **S3 `raw-tracking-data`**: batch JSON 100-500 frame/file (schema: `data-contracts.md` mục 3)
+7. Worker ghi **`MARKER#COMPLETED`** vào DynamoDB — **bước cuối cùng**, sau khi mọi dữ liệu đã ghi xong
+8. Worker gửi callback `{status: "completed", duration_sec}` vào **SQS `match-status-callbacks`**, rồi xóa message khỏi `video-processing-jobs`
+9. **Song song:** S3 Event trên prefix `raw-clips/` kích hoạt **Lambda `mediaconvert-trigger-fn`** → tạo MediaConvert job → transcode → ghi output sang prefix **`clips/{team_id}/{match_id}/{event_id}.mp4`** (quyết định Q21)
+10. **Lambda `status-updater-fn`** đọc `match-status-callbacks`, validate transition, UPDATE `matches.status` trong RDS
+11. HLV gọi `GET /matches/{id}/status` thấy `completed` → gọi `GET /matches/{id}/highlights` → Backend Query DynamoDB (**filter bỏ item `MARKER#*`**) → sinh **CloudFront Signed URL** hiệu lực 4 giờ cho từng clip
+12. Client phát video qua **CloudFront Origin 2** → S3 `processed-highlights` (private, chỉ CloudFront truy cập qua OAC)
 
-**Trạng thái xử lý (polling):**
-- Trong lúc chờ xử lý, client có thể gọi `GET /matches/{id}/status` định kỳ để biết job đang ở trạng thái nào: `pending` → `processing` → `completed` / `failed`
+**Chống vòng lặp đệ quy S3 → MediaConvert → S3** (quyết định Q19b): S3 Event Notification trên bucket `processed-highlights` cấu hình `filter_prefix = "raw-clips/"`. MediaConvert ghi output vào prefix `clips/` — không khớp filter — nên **không thể tự kích hoạt lại chính nó**. Nếu 2 prefix này gộp làm một, Lambda sẽ trigger vô hạn và tốn chi phí thật.
+
+**Trạng thái xử lý (polling):** `GET /matches/{id}/status` trả 1 trong **5 giá trị**: `pending` → `uploaded` → `processing` → `completed` / `failed`.
+
+### 3.1. Luồng cập nhật `matches.status` — Event-Driven Callback (quyết định Q20)
+
+AI Worker và Job Dispatcher **không có RDS credential** (giữ least-privilege, tránh RDS connection exhaustion khi Worker scale nhiều task). Mọi thay đổi trạng thái sau `uploaded` đi qua đường riêng:
+
+```
+Backend NestJS ────prisma.write────────────────────────────> RDS   (pending, uploaded)
+
+Job Dispatcher ─┐
+                ├─> SQS match-status-callbacks ─> λ status-updater ─> RDS   (processing,
+AI Worker ──────┘              │                                            completed, failed)
+                               └─> DLQ ─> CloudWatch Alarm ─> SNS
+```
+
+| Transition | Ai ghi | Cơ chế |
+|---|---|---|
+| `→ pending` | Backend | `prisma.write` trực tiếp |
+| `pending → uploaded` | Backend | `prisma.write` trực tiếp (khi client gọi `confirm-upload`) |
+| `uploaded → processing` | `status-updater-fn` | Dispatcher gửi callback |
+| `processing → completed` | `status-updater-fn` | Worker gửi callback |
+| `processing → failed` | `status-updater-fn` | Worker gửi callback / redrive DLQ |
+
+**DLQ cho queue callback là bắt buộc** (quyết định D2): nếu `status-updater-fn` chết (RDS unreachable, bug validate transition), status sẽ **treo ở `processing` vĩnh viễn** — user thấy spinner quay mãi mà không ai biết. Đây là silent failure nguy hiểm hơn cả job AI thất bại, nên phải có Alarm riêng.
 
 **Trường hợp lỗi:**
-- Worker xử lý job thất bại (video lỗi, timeout, hết bộ nhớ) → SQS tự động retry theo cấu hình visibility timeout
-- Sau số lần retry tối đa (cấu hình trước, ví dụ 3 lần) → message chuyển vào **Dead Letter Queue (SQS DLQ)**
-- DLQ có message → **CloudWatch Alarm** kích hoạt → **SNS** gửi cảnh báo tới kênh Email/Slack để đội vận hành kiểm tra thủ công
+- Worker xử lý job thất bại (video lỗi, timeout, hết bộ nhớ) → SQS retry theo `visibility_timeout = 900s`
+- Sau `max_receive_count = 3` lần → message chuyển vào **DLQ `video-processing-dlq`**
+- DLQ có message → **CloudWatch Alarm** → **SNS** → Email/Slack để đội vận hành kiểm tra thủ công
+- Worker crash giữa đường (đã ghi 3/50 event) → lần retry **overwrite đúng** những event cũ nhờ `event_id` tất định, không tạo highlight trùng (quyết định Q22)
 
 ---
 
@@ -67,17 +102,23 @@
 
 Luồng này chạy tách biệt, thường theo lịch (batch) chứ không real-time như highlight.
 
-1. Dữ liệu tracking thô đã có sẵn tại **S3 Bucket (raw-tracking-data)** (được ghi ra từ bước 5 của luồng Highlight Engine — đây là cùng một bucket, dùng chung giữa 2 pipeline)
-2. **AWS Glue ETL Job** chạy theo lịch (hoặc trigger thủ công), đọc dữ liệu raw, thực hiện:
-   - Làm sạch dữ liệu (loại bỏ frame lỗi/nhiễu)
-   - Tính toán chỉ số: quãng đường di chuyển, vị trí trung bình (heatmap), tốc độ theo từng cầu thủ
-3. Kết quả ghi vào **S3 Bucket (curated-data)** dưới định dạng Parquet, đã tối ưu cho truy vấn
-4. **AWS Glue Data Catalog** tự động cập nhật schema của dữ liệu curated (qua Glue Crawler)
-5. **Amazon Athena** cho phép truy vấn SQL trực tiếp trên dữ liệu curated mà không cần hạ tầng database riêng
-6. **QuickSight Dashboard** kết nối tới Athena, hiển thị trực quan: heatmap cầu thủ, so sánh chỉ số qua nhiều trận, chuẩn bị báo cáo đối thủ cho trận tiếp theo
+1. Dữ liệu tracking thô đã có tại **S3 `raw-tracking-data`** (`{team_id}/{match_id}/tracking_batch_*.json`, ghi ra từ bước 6 của luồng Highlight Engine)
+2. **AWS Glue ETL Job** chạy theo lịch (hoặc trigger thủ công), đọc dữ liệu raw:
+   - Kiểm tra `schema_version` — fail-fast nếu gặp version chưa hỗ trợ
+   - Làm sạch dữ liệu (loại bỏ frame lỗi, `position_field` null)
+   - Quy đổi `position_field` (0-100) sang mét bằng `field_dimensions` **đọc từ chính file**, không hardcode 105/68
+   - Tính chỉ số theo từng **`track_id`** (không phải `player_id` — v1 không OCR số áo): quãng đường (Euclid giữa 2 tọa độ liên tiếp), tốc độ (khoảng cách / delta thời gian theo FPS), heatmap (gom nhóm theo lưới **10×6**)
+3. Kết quả ghi vào **S3 `curated-data`** dạng Parquet, **Hive-style partition** `team_id={team_id}/match_id={match_id}/`
+4. **Glue Crawler** cập nhật Data Catalog — tự nhận `team_id`/`match_id` thành **partition column**
+5. **Amazon Athena** truy vấn SQL trên curated data, ghi kết quả vào **S3 `athena-results`** (lifecycle xóa sau 7 ngày)
+6. HLV mở trang thống kê → Frontend hiển thị "Player Track #1 (Home)" + dropdown → HLV gán `track_id → player_id` → Backend lưu vào RDS `match_track_mappings`
+7. `GET /matches/{id}/stats` JOIN `match_track_mappings` để trả về tên cầu thủ thật + mảng số heatmap; **React render heatmap bằng HTML5 Canvas** (không có PNG server-side)
+
+**Vì sao Hive partition quan trọng:** Athena tính tiền theo **dung lượng scan**. Không có partition, mỗi query phải scan toàn bộ bucket; có partition, `WHERE team_id = '...'` chỉ đọc đúng thư mục cần — giảm cả độ trễ lẫn chi phí.
 
 **Trường hợp lỗi:**
-- Glue Job thất bại (schema thay đổi bất ngờ, dữ liệu thiếu field) → cần alarm riêng trên Glue Job status, không dùng chung cơ chế DLQ như SQS
+- Glue Job thất bại (schema thay đổi, thiếu field) → alarm riêng trên Glue Job status, không dùng chung DLQ như SQS
+- Gặp `schema_version` lạ → Job fail-fast với message rõ ràng thay vì crash giữa đường khó debug
 - Dữ liệu curated không khớp Crawler → Athena query lỗi/thiếu cột, cần review lại schema
 
 ---

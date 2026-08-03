@@ -32,30 +32,52 @@ matchlens-{environment}-{service/resource-purpose}-{resource-type}
 | Loại resource | Pattern | Ví dụ thực tế |
 |---|---|---|
 | VPC | `matchlens-{env}-vpc` | `matchlens-dev-vpc` |
-| Subnet | `matchlens-{env}-{public/private}-subnet-{az}` | `matchlens-dev-private-subnet-a` |
+| Subnet (3 tier) | `matchlens-{env}-{public/private-app/private-db}-subnet-{az}` | `matchlens-dev-private-db-subnet-a` |
+| Route Table | `matchlens-{env}-{tier}-rt-{az}` | `matchlens-dev-private-app-rt-a` |
+| Internet Gateway | `matchlens-{env}-igw` | `matchlens-dev-igw` |
 | NAT Instance | `matchlens-{env}-nat-{az}` | `matchlens-dev-nat-a` |
+| VPC Endpoint | `matchlens-{env}-{service}-endpoint` | `matchlens-dev-s3-endpoint` |
 | Security Group | `matchlens-{env}-{purpose}-sg` | `matchlens-dev-backend-sg` |
 | ALB | `matchlens-{env}-alb` | `matchlens-dev-alb` |
+| ALB Target Group | `matchlens-{env}-{service}-tg` | `matchlens-dev-backend-tg` |
 | ECS Cluster | `matchlens-{env}-cluster` | `matchlens-dev-cluster` |
 | ECS Service | `matchlens-{env}-{backend/worker}-service` | `matchlens-dev-backend-service` |
 | ECS Task Definition | `matchlens-{env}-{backend/worker}-task` | `matchlens-dev-worker-task` |
-| RDS Instance | `matchlens-{env}-postgres` | `matchlens-dev-postgres` |
+| RDS Master | `matchlens-{env}-postgres` | `matchlens-dev-postgres` |
+| RDS Read Replica | `matchlens-{env}-postgres-replica` | `matchlens-staging-postgres-replica` |
+| DB Subnet Group | `matchlens-{env}-db-subnet-group` | `matchlens-dev-db-subnet-group` |
 | DynamoDB Table | `matchlens-{env}-match-events` | `matchlens-dev-match-events` |
 | S3 Bucket | `matchlens-{env}-{purpose}` (không viết tắt, S3 cần globally unique) | `matchlens-dev-raw-videos` |
-| SQS Queue | `matchlens-{env}-video-processing-jobs` | `matchlens-dev-video-processing-jobs` |
-| SQS DLQ | `matchlens-{env}-video-processing-dlq` | `matchlens-dev-video-processing-dlq` |
-| Lambda Function | `matchlens-{env}-{purpose}-fn` | `matchlens-dev-job-dispatcher-fn` |
-| IAM Role | `matchlens-{env}-{service}-role` | `matchlens-dev-backend-role` |
+| S3 Bucket (Terraform state) | `matchlens-terraform-state-{aws_account_id}` | `matchlens-terraform-state-123456789012` |
+| SQS Queue (video job) | `matchlens-{env}-video-processing-jobs` | `matchlens-dev-video-processing-jobs` |
+| SQS DLQ (video job) | `matchlens-{env}-video-processing-dlq` | `matchlens-dev-video-processing-dlq` |
+| SQS Queue (status callback) | `matchlens-{env}-match-status-callbacks` | `matchlens-dev-match-status-callbacks` |
+| SQS DLQ (status callback) | `matchlens-{env}-match-status-callbacks-dlq` | `matchlens-dev-match-status-callbacks-dlq` |
+| Lambda Function | `matchlens-{env}-{purpose}-fn` | `matchlens-dev-job-dispatcher-fn`<br>`matchlens-dev-status-updater-fn`<br>`matchlens-dev-mediaconvert-trigger-fn` |
+| IAM Role | `matchlens-{env}-{service}-role` | `matchlens-dev-backend-role`<br>`matchlens-dev-status-updater-role`<br>`matchlens-dev-mediaconvert-role` |
 | IAM Policy | `matchlens-{env}-{service}-policy` | `matchlens-dev-worker-policy` |
-| Secrets Manager Secret | `matchlens-{env}-{purpose}-secret` | `matchlens-dev-db-credentials-secret` |
+| Secrets Manager Secret | `matchlens-{env}-{purpose}-secret` | `matchlens-dev-db-credentials-secret`<br>`matchlens-dev-jwt-keypair-secret`<br>`matchlens-dev-cloudfront-signing-key-secret` |
+| CloudWatch Log Group | `/matchlens/{env}/{service}` | `/matchlens/dev/backend` |
 | CloudWatch Dashboard | `matchlens-{env}-dashboard` | `matchlens-dev-dashboard` |
 | CloudWatch Alarm | `matchlens-{env}-{metric}-alarm` | `matchlens-dev-sqs-dlq-alarm` |
 | SNS Topic | `matchlens-{env}-alerts-topic` | `matchlens-dev-alerts-topic` |
+| AWS Budget | `matchlens-{env}-monthly-budget` | `matchlens-dev-monthly-budget` |
+| EventBridge Rule | `matchlens-{env}-{purpose}-rule` | `matchlens-dev-nightly-shutdown-rule`<br>`matchlens-dev-morning-startup-rule` |
 | ECR Repository | `matchlens-{backend/worker}` (không cần env — 1 repo dùng chung nhiều môi trường, phân biệt bằng image tag) | `matchlens-backend` |
 | CloudFront Distribution | Không đặt tên thủ công (AWS tự sinh ID) — dùng tag `Name` để nhận diện | Tag: `matchlens-dev-cdn` |
+| CloudFront Key Group | `matchlens-{env}-signing-key-group` | `matchlens-dev-signing-key-group` |
 | Glue Job | `matchlens-{env}-etl-player-stats` | `matchlens-dev-etl-player-stats` |
 | Glue Database (Catalog) | `matchlens_{env}` (dùng underscore vì Glue yêu cầu) | `matchlens_dev` |
 | Athena Workgroup | `matchlens-{env}-workgroup` | `matchlens-dev-workgroup` |
+
+**Danh sách 5 S3 bucket chính thức** (quyết định Q30):
+```
+matchlens-{env}-raw-videos
+matchlens-{env}-processed-highlights
+matchlens-{env}-raw-tracking-data
+matchlens-{env}-curated-data
+matchlens-{env}-athena-results
+```
 
 ### 2.3. Trường hợp đặc biệt
 

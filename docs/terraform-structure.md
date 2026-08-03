@@ -26,12 +26,14 @@ matchlens-infra/
 │   ├── messaging/
 │   ├── security/
 │   ├── observability/
-│   └── cicd/
+│   ├── cicd/
+│   └── analytics/          (chỉ có README — reserved cho Phase 6, quyết định Q6)
 ├── environments/
 │   ├── dev/
 │   │   ├── main.tf
 │   │   ├── variables.tf
 │   │   ├── terraform.tfvars
+│   │   ├── versions.tf
 │   │   └── backend.tf
 │   ├── staging/
 │   │   └── (cấu trúc tương tự dev)
@@ -42,25 +44,32 @@ matchlens-infra/
 └── README.md
 ```
 
+**Số module chính thức: 8** (`network`, `compute`, `database`, `storage`, `messaging`, `security`, `observability`, `cicd`) + 1 stub `analytics/` chưa có `.tf` (quyết định Q5, Q6).
+
 ---
 
 ## 3. Chi tiết từng module
 
 ### 3.1. `modules/network/`
 
-**Chịu trách nhiệm:** VPC, subnet, route table, NAT, Internet Gateway, VPC Endpoint (nếu áp dụng theo câu hỏi mở ở IAM Design).
+**Chịu trách nhiệm:** VPC, subnet 3 tier, route table, NAT Instance, Internet Gateway, VPC Gateway Endpoint.
 
 ```
 modules/network/
-├── main.tf          (VPC, subnet, IGW, NAT, route table)
+├── main.tf          (VPC, subnet 3 tier, IGW, route table)
+├── nat-instance.tf  (NAT Instance, số lượng theo var.nat_instance_count)
+├── vpc-endpoints.tf (Gateway Endpoint cho S3 + DynamoDB — quyết định Q29)
 ├── variables.tf
 ├── outputs.tf
+├── versions.tf
 └── README.md
 ```
 
-**Input chính:** `vpc_cidr`, `az_count`, `public_subnet_cidrs`, `private_subnet_cidrs`, `environment`
+**Kiến trúc 3-Tier bắt buộc** (quyết định Q1): `public`, `private_app`, `private_db`. Route table của `private_db` **không có** route `0.0.0.0/0`.
 
-**Output chính:** `vpc_id`, `public_subnet_ids`, `private_subnet_ids`, `nat_instance_ids`
+**Input chính:** `vpc_cidr`, `az_count`, `public_subnet_cidrs`, `private_app_subnet_cidrs`, `private_db_subnet_cidrs`, `nat_instance_count` (dev = 1, staging/prod = 2 — quyết định Q2), `environment`
+
+**Output chính:** `vpc_id`, `public_subnet_ids`, `private_app_subnet_ids`, `private_db_subnet_ids`, `nat_instance_ids`, `db_subnet_group_name`
 
 ---
 
@@ -90,61 +99,77 @@ modules/compute/
 
 ### 3.3. `modules/database/`
 
-**Chịu trách nhiệm:** RDS PostgreSQL (Multi-AZ), DynamoDB table `MatchEvents`.
+**Chịu trách nhiệm:** RDS PostgreSQL (Master, Multi-AZ Standby, Read Replica có điều kiện), DynamoDB table `match-events`.
 
 ```
 modules/database/
 ├── rds.tf
+├── rds-replica.tf   (count = var.create_read_replica ? 1 : 0 — quyết định Q3)
 ├── dynamodb.tf
 ├── variables.tf
 ├── outputs.tf
+├── versions.tf
 └── README.md
 ```
 
-**Input chính:** `vpc_id`, `private_subnet_ids`, `db_instance_class`, `multi_az` (bool), `environment`
+**Input chính:** `vpc_id`, `private_db_subnet_ids`, `db_instance_class`, `multi_az` (bool), `create_read_replica` (bool — dev = false, staging/prod = true), `environment`
 
-**Output chính:** `rds_endpoint`, `rds_secret_arn` (nếu tạo secret ngay trong module này), `dynamodb_table_name`, `dynamodb_table_arn`
+**Output chính:** `rds_master_endpoint`, `rds_replica_endpoint` (bằng `rds_master_endpoint` khi `create_read_replica = false`), `rds_secret_arn`, `dynamodb_table_name`, `dynamodb_table_arn`
+
+**Identifier** (quyết định Q4): Master = `matchlens-{env}-postgres`, Read Replica = `matchlens-{env}-postgres-replica`.
 
 ---
 
 ### 3.4. `modules/storage/`
 
-**Chịu trách nhiệm:** 4 S3 bucket (raw-videos, processed-highlights, raw-tracking-data, curated-data), lifecycle policy, CloudFront distribution, WAF.
+**Chịu trách nhiệm:** 5 S3 bucket (raw-videos, processed-highlights, raw-tracking-data, curated-data, athena-results), lifecycle policy, CloudFront distribution + OAC + key group, WAF.
 
 ```
 modules/storage/
 ├── s3-buckets.tf
 ├── lifecycle-policies.tf
-├── cloudfront.tf
+├── cloudfront.tf           (1 distribution, 2 origin, OAC)
+├── cloudfront-signing.tf   (aws_cloudfront_public_key + key_group — quyết định Q23)
 ├── waf.tf
 ├── variables.tf
 ├── outputs.tf
+├── versions.tf
 └── README.md
 ```
 
-**Input chính:** `environment`, `raw_video_retention_days`, `domain_name` (cho CloudFront/Route 53)
+**Bucket thứ 5** `matchlens-{env}-athena-results` (quyết định Q30): lifecycle xoá vĩnh viễn sau 7 ngày.
 
-**Output chính:** `raw_videos_bucket_name`, `processed_highlights_bucket_name`, `raw_tracking_bucket_name`, `curated_data_bucket_name`, `cloudfront_distribution_id`, `cloudfront_domain_name`
+**Input chính:** `environment`, `raw_video_retention_days`, `domain_name` (cho CloudFront/Route 53), `cloudfront_public_key_pem`
+
+**Output chính:** `raw_videos_bucket_name/arn`, `processed_highlights_bucket_name/arn`, `raw_tracking_bucket_name/arn`, `curated_data_bucket_name/arn`, `athena_results_bucket_name/arn`, `cloudfront_distribution_id`, `cloudfront_domain_name`, `cloudfront_key_group_id`
 
 ---
 
 ### 3.5. `modules/messaging/`
 
-**Chịu trách nhiệm:** SQS Queue (video-processing-jobs), Dead Letter Queue, Lambda Job Dispatcher, S3 Event Notification config.
+**Chịu trách nhiệm:** SQS Queue + DLQ (2 cặp), 3 Lambda function, S3 Event Notification config.
 
 ```
 modules/messaging/
-├── sqs.tf
-├── lambda-dispatcher.tf
-├── s3-event-trigger.tf
+├── sqs-video-jobs.tf        (video-processing-jobs + DLQ)
+├── sqs-status-callbacks.tf  (match-status-callbacks + DLQ — quyết định Q20, D2)
+├── lambda-dispatcher.tf     (job dispatcher)
+├── lambda-status-updater.tf (ghi RDS — trong Private App Subnet, quyết định Q20)
+├── lambda-mediaconvert.tf   (mediaconvert-trigger-fn — quyết định Q21)
+├── s3-event-trigger.tf      (2 notification: raw-videos, và processed-highlights prefix raw-clips/)
 ├── variables.tf
 ├── outputs.tf
+├── versions.tf
 └── README.md
 ```
 
-**Input chính:** `raw_videos_bucket_arn`, `environment`, `max_receive_count` (cho DLQ), `visibility_timeout`
+**Cấu hình chốt** (quyết định Q28): `max_receive_count = 3`, `visibility_timeout = 900` giây cho cả 2 queue.
 
-**Output chính:** `sqs_queue_url`, `sqs_queue_arn`, `dlq_arn`, `dispatcher_lambda_arn`
+**Lưu ý S3 Event Notification** (quyết định Q19b): notification trên bucket `processed-highlights` **bắt buộc** có `filter_prefix = "raw-clips/"`. MediaConvert ghi output vào prefix `clips/` nên không khớp filter → không thể tự kích hoạt đệ quy. Đây là biện pháp chống vòng lặp ở tầng hạ tầng, không phụ thuộc logic Lambda.
+
+**Input chính:** `raw_videos_bucket_arn`, `processed_highlights_bucket_arn`, `environment`, `max_receive_count`, `visibility_timeout`, `private_app_subnet_ids`, `status_updater_role_arn`, `dispatcher_role_arn`, `mediaconvert_trigger_role_arn`, `mediaconvert_role_arn`, `db_secret_arn`
+
+**Output chính:** `sqs_queue_url/arn`, `dlq_arn`, `status_callbacks_queue_url/arn`, `status_callbacks_dlq_arn`, `dispatcher_lambda_arn`, `status_updater_lambda_arn`, `mediaconvert_trigger_lambda_arn`
 
 ---
 
@@ -157,42 +182,64 @@ modules/security/
 ├── iam-backend-role.tf
 ├── iam-worker-role.tf
 ├── iam-dispatcher-role.tf
+├── iam-status-updater-role.tf      (quyết định Q20)
+├── iam-mediaconvert-role.tf        (trigger role + service role — quyết định Q21)
 ├── iam-glue-role.tf
-├── iam-cicd-role.tf        (bao gồm OIDC provider config cho GitHub Actions)
-├── secrets-manager.tf
+├── iam-cicd-role.tf                (OIDC provider có thể đặt ở modules/cicd)
+├── secrets-manager.tf              (db-credentials, jwt-keypair, cloudfront-signing-key)
 ├── security-hub.tf
 ├── aws-config.tf
 ├── guardduty.tf
 ├── variables.tf
 ├── outputs.tf
+├── versions.tf
 └── README.md
 ```
 
 **Input chính:** danh sách resource ARN cụ thể mà từng role cần quyền truy cập (nhận từ output của các module khác — network, storage, database, messaging)
 
-**Output chính:** `backend_task_role_arn`, `worker_task_role_arn`, `dispatcher_role_arn`, `glue_role_arn`, `cicd_role_arn`
+**Output chính:** `backend_task_role_arn`, `worker_task_role_arn`, `dispatcher_role_arn`, `status_updater_role_arn`, `mediaconvert_trigger_role_arn`, `mediaconvert_role_arn`, `glue_role_arn`, `cicd_role_arn`, `db_secret_arn`, `jwt_keypair_secret_arn`, `cloudfront_signing_key_secret_arn`
 
 **Ghi chú quan trọng:** module này phụ thuộc (depends_on) vào output của storage/database/messaging vì cần biết chính xác ARN resource để viết policy least-privilege — cần chú ý thứ tự apply hoặc dùng `data` source hợp lý để tránh circular dependency.
+
+**Vấn đề circular dependency giữa `security` và `messaging`:** `messaging` cần role ARN để gắn vào Lambda, nhưng `security` cần queue ARN để viết policy. Giải pháp: `security` viết policy theo **ARN dự đoán được** (`arn:aws:sqs:{region}:{account_id}:matchlens-{env}-match-status-callbacks`) dựng từ `data.aws_caller_identity` + naming convention, thay vì tham chiếu trực tiếp output của `messaging`. Nhờ vậy `security` apply trước `messaging` được.
 
 ---
 
 ### 3.7. `modules/observability/`
 
-**Chịu trách nhiệm:** CloudWatch Dashboard, Alarm, SNS Topic.
+**Chịu trách nhiệm:** CloudWatch Dashboard, Alarm, SNS Topic, AWS Budget, EventBridge auto-shutdown (dev).
 
 ```
 modules/observability/
 ├── cloudwatch-dashboard.tf
 ├── cloudwatch-alarms.tf
 ├── sns.tf
+├── budget.tf              (AWS Budget $50/tháng — quyết định Q33)
+├── eventbridge-shutdown.tf (2 rule stop/start dev — quyết định D4)
 ├── variables.tf
 ├── outputs.tf
+├── versions.tf
 └── README.md
 ```
 
-**Input chính:** tên các resource cần giám sát (ECS service name, SQS queue name, RDS identifier, ALB arn), `alert_email` hoặc `slack_webhook_url`
+**Alarm bắt buộc:** SQS DLQ có message (cả 2 DLQ — `video-processing-dlq` và `match-status-callbacks-dlq`), ECS service health check fail, RDS storage vượt ngưỡng, ALB 5xx rate, Glue Job fail (Phase 6).
+
+**EventBridge auto-shutdown** — chỉ áp dụng `dev`, cần **2 rule** vì RDS chỉ có stop/start (không có "pause", xem D4):
+- `0 17 * * ? *` UTC (00:00 giờ VN) → ECS desired count = 0, `StopDBInstance`
+- `0 1 * * ? *` UTC (08:00 giờ VN) → `StartDBInstance`, ECS desired count = 1
+
+Rule start là **bắt buộc** vì AWS tự động start lại RDS sau tối đa 7 ngày dù không ai can thiệp — có rule chủ động thì thời điểm start nằm trong kiểm soát.
+
+**Input chính:** tên các resource cần giám sát (ECS service name, SQS queue name, RDS identifier, ALB arn), `alert_email` hoặc `slack_webhook_url`, `monthly_budget_usd` (= 50), `enable_auto_shutdown` (bool — chỉ true ở dev)
 
 **Output chính:** `sns_topic_arn`, `dashboard_url`
+
+---
+
+### 3.9. `modules/analytics/` (stub — Phase 6)
+
+Chỉ có `README.md` ghi chú *"Reserved for Phase 6 (Glue / Athena / QuickSight)"*, chưa có file `.tf` nào (quyết định Q6). Mục đích: giữ cấu trúc thư mục tổng thể không bị đổi giữa chừng khi tới Phase 6.
 
 ---
 
@@ -221,10 +268,11 @@ Mỗi environment chỉ là nơi "lắp ráp" các module lại với giá trị
 
 ```hcl
 module "network" {
-  source   = "../../modules/network"
-  vpc_cidr = var.vpc_cidr
-  az_count = 2
-  environment = var.environment
+  source                   = "../../modules/network"
+  vpc_cidr                 = var.vpc_cidr
+  az_count                 = 2
+  nat_instance_count       = var.nat_instance_count   # dev = 1, staging/prod = 2
+  environment              = var.environment
 }
 
 module "storage" {
@@ -233,16 +281,11 @@ module "storage" {
 }
 
 module "database" {
-  source             = "../../modules/database"
-  vpc_id             = module.network.vpc_id
-  private_subnet_ids = module.network.private_subnet_ids
-  multi_az           = var.environment == "prod" ? true : false
-  environment        = var.environment
-}
-
-module "messaging" {
-  source                = "../../modules/messaging"
-  raw_videos_bucket_arn = module.storage.raw_videos_bucket_arn
+  source                = "../../modules/database"
+  vpc_id                = module.network.vpc_id
+  private_db_subnet_ids = module.network.private_db_subnet_ids
+  multi_az              = var.environment == "dev" ? false : true
+  create_read_replica   = var.environment == "dev" ? false : true
   environment           = var.environment
 }
 
@@ -250,28 +293,50 @@ module "security" {
   source                     = "../../modules/security"
   raw_videos_bucket_arn      = module.storage.raw_videos_bucket_arn
   processed_highlights_arn   = module.storage.processed_highlights_bucket_arn
-  sqs_queue_arn              = module.messaging.sqs_queue_arn
+  raw_tracking_bucket_arn    = module.storage.raw_tracking_bucket_arn
+  curated_data_bucket_arn    = module.storage.curated_data_bucket_arn
+  athena_results_bucket_arn  = module.storage.athena_results_bucket_arn
   dynamodb_table_arn         = module.database.dynamodb_table_arn
+  cloudfront_key_group_id    = module.storage.cloudfront_key_group_id
   environment                = var.environment
+  # SQS ARN dựng từ naming convention, không tham chiếu module.messaging
+  # → tránh circular dependency (xem mục 3.6)
+}
+
+module "messaging" {
+  source                          = "../../modules/messaging"
+  raw_videos_bucket_arn           = module.storage.raw_videos_bucket_arn
+  processed_highlights_bucket_arn = module.storage.processed_highlights_bucket_arn
+  private_app_subnet_ids          = module.network.private_app_subnet_ids
+  dispatcher_role_arn             = module.security.dispatcher_role_arn
+  status_updater_role_arn         = module.security.status_updater_role_arn
+  mediaconvert_trigger_role_arn   = module.security.mediaconvert_trigger_role_arn
+  mediaconvert_role_arn           = module.security.mediaconvert_role_arn
+  db_secret_arn                   = module.security.db_secret_arn
+  max_receive_count               = 3
+  visibility_timeout              = 900
+  environment                     = var.environment
 }
 
 module "compute" {
-  source                 = "../../modules/compute"
-  vpc_id                 = module.network.vpc_id
-  private_subnet_ids     = module.network.private_subnet_ids
-  public_subnet_ids      = module.network.public_subnet_ids
-  backend_task_role_arn  = module.security.backend_task_role_arn
-  worker_task_role_arn   = module.security.worker_task_role_arn
+  source                  = "../../modules/compute"
+  vpc_id                  = module.network.vpc_id
+  private_app_subnet_ids  = module.network.private_app_subnet_ids
+  public_subnet_ids       = module.network.public_subnet_ids
+  backend_task_role_arn   = module.security.backend_task_role_arn
+  worker_task_role_arn    = module.security.worker_task_role_arn
   environment             = var.environment
 }
 
 module "observability" {
-  source      = "../../modules/observability"
-  environment = var.environment
+  source               = "../../modules/observability"
+  monthly_budget_usd   = 50
+  enable_auto_shutdown = var.environment == "dev" ? true : false
+  environment          = var.environment
 }
 ```
 
-**Nhận xét:** cách viết này thể hiện rõ thứ tự phụ thuộc tự nhiên — `network` và `storage` không phụ thuộc ai, `database`/`messaging` phụ thuộc `network`/`storage`, `security` phụ thuộc gần như tất cả (vì cần ARN cụ thể), `compute` phụ thuộc `security` (cần Task Role) và `network`.
+**Nhận xét:** thứ tự phụ thuộc — `network` và `storage` không phụ thuộc ai; `database` phụ thuộc `network`; `security` phụ thuộc `storage`/`database` (và dựng SQS ARN theo convention để không phụ thuộc `messaging`); `messaging` phụ thuộc `storage`/`network`/`security`; `compute` phụ thuộc `network`/`security`.
 
 ---
 
@@ -283,11 +348,29 @@ module "observability" {
 # environments/{env}/backend.tf
 terraform {
   backend "s3" {
-    bucket         = "matchlens-terraform-state"
+    bucket         = "matchlens-terraform-state-{aws_account_id}"
     key            = "environments/{env}/terraform.tfstate"
     region         = "ap-southeast-1"
     dynamodb_table = "matchlens-terraform-locks"
     encrypt        = true
+  }
+}
+```
+
+**Quyết định Q8:** bucket state có hậu tố `{aws_account_id}` để đảm bảo globally unique. Region toàn dự án là `ap-southeast-1` (Singapore).
+
+### 5.2. Pin version (quyết định Q7)
+
+Mỗi module và mỗi environment đều có `versions.tf`:
+
+```hcl
+terraform {
+  required_version = "~> 1.9"
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.60"
+    }
   }
 }
 ```
@@ -303,16 +386,18 @@ terraform {
 ## 6. Quy ước đặt tên biến & resource (áp dụng xuyên suốt mọi module)
 
 - Biến môi trường luôn tên `environment`, giá trị: `dev`, `staging`, `prod`
-- Resource name pattern: `matchlens-${var.environment}-${resource_purpose}` (đồng bộ với Naming Convention sẽ chốt chi tiết ở tài liệu riêng)
+- Resource name pattern: `matchlens-${var.environment}-${resource_purpose}` (chi tiết đầy đủ ở `docs/naming-tagging-standard.md`)
 - Tag bắt buộc áp dụng qua `default_tags` ở provider block, không set tag thủ công từng resource:
 ```hcl
 provider "aws" {
-  region = var.aws_region
+  region = var.aws_region       # ap-southeast-1
   default_tags {
     tags = {
       Project     = "MatchLens"
       Environment = var.environment
       ManagedBy   = "Terraform"
+      Owner       = var.owner   # "luong-van-vo"
+      CostCenter  = "matchlens-project"
     }
   }
 }
@@ -322,25 +407,31 @@ provider "aws" {
 
 ## 7. Thứ tự triển khai khuyến nghị khi bắt đầu code
 
-1. `global/bootstrap/` — tạo S3 backend + DynamoDB lock (chạy 1 lần, dùng local state tạm thời cho chính bootstrap này)
-2. `modules/network/` — nền tảng cho mọi thứ khác
+1. `global/bootstrap/` — tạo S3 backend + DynamoDB lock (chạy 1 lần, dùng local state tạm thời cho chính bootstrap này, sau đó migrate state lên S3)
+2. `modules/network/` — nền tảng cho mọi thứ khác (VPC 3-tier + Gateway Endpoint)
 3. `modules/storage/` — không phụ thuộc network, có thể làm song song
-4. `modules/database/` — phụ thuộc network
-5. `modules/messaging/` — phụ thuộc storage (cần bucket ARN)
-6. `modules/security/` — phụ thuộc storage, database, messaging (cần ARN cụ thể để viết IAM policy)
+4. `modules/database/` — phụ thuộc network (cần `private_db_subnet_ids`)
+5. `modules/security/` — phụ thuộc storage, database (cần ARN cụ thể để viết IAM policy). SQS ARN dựng theo naming convention để không phụ thuộc `messaging`
+6. `modules/messaging/` — phụ thuộc storage, network, security (cần role ARN gắn vào Lambda)
 7. `modules/compute/` — phụ thuộc network, security (cần Task Role ARN)
 8. `modules/observability/` — phụ thuộc compute, database, messaging (cần tên resource để tạo alarm)
 9. `modules/cicd/` — có thể làm độc lập, tích hợp sau cùng khi bắt đầu build pipeline
 
-Thứ tự này khớp với Phase 0/1 trong roadmap tổng thể của dự án — bắt đầu code Terraform theo đúng thứ tự trên sẽ tránh được lỗi phụ thuộc chéo giữa các module.
+**Lưu ý thay đổi so với bản thiết kế trước:** `security` (bước 5) giờ đứng **trước** `messaging` (bước 6) — vì `messaging` cần role ARN để gắn vào 3 Lambda function, còn `security` chỉ cần ARN dự đoán được của SQS queue (dựng từ account ID + naming convention). Đây là cách phá vỡ circular dependency phát sinh từ quyết định Q20.
+
+Thứ tự này khớp với Phase 0/1 trong `docs/roadmap.md`.
 
 ---
 
-## 8. Câu hỏi còn mở — cần quyết định trước khi code
+## 8. Câu hỏi còn mở — ĐÃ CHỐT TOÀN BỘ
 
-- [ ] Dùng Terraform Workspace hay giữ nguyên cách tách thư mục `environments/{env}/` như thiết kế này? (khuyến nghị giữ tách thư mục — rõ ràng hơn, tránh rủi ro chạy nhầm workspace)
-- [ ] Version Terraform và AWS Provider cụ thể nào sẽ pin trong `versions.tf` của từng module, để tránh lỗi không tương thích khi các thành viên khác (hoặc chính bạn sau này) chạy lại?
-- [ ] Có cần module `modules/analytics/` riêng cho Glue/Athena/QuickSight ngay từ bây giờ, hay gộp tạm vào `modules/storage/` cho tới khi triển khai Phase 6 (Analytics)? — khuyến nghị: tạo sẵn thư mục rỗng có README ghi chú "sẽ triển khai ở Phase 6" để cấu trúc tổng thể không bị đổi giữa chừng
+| Câu hỏi | Quyết định | Mã ADR |
+|---|---|---|
+| Terraform Workspace hay tách thư mục `environments/{env}/`? | Giữ tách thư mục — rõ ràng hơn, tránh chạy nhầm workspace | — |
+| Pin version Terraform + AWS Provider? | `required_version = "~> 1.9"`, `hashicorp/aws = "~> 5.60"` | Q7 |
+| Có `modules/analytics/` ngay không? | Tạo stub chỉ có README, ghi chú reserved cho Phase 6 | Q6 |
+
+Chi tiết đầy đủ: `docs/decision-record.md`.
 
 ---
 
