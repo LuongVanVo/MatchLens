@@ -74,7 +74,7 @@ Terraform: điều khiển qua biến `nat_instance_count` (dev = 1, staging/pro
 
 ### Q5 — Giữ 8 Terraform module
 
-Danh sách chính thức: `network`, `compute`, `database`, `storage`, `messaging`, `security`, `observability`, `cicd`. Module `cicd/` chịu trách nhiệm ECR repository + GitHub OIDC Federation provider.
+Danh sách chính thức: `network`, `compute`, `database`, `storage`, `messaging`, `security`, `observability`, `cicd`. Module `cicd/` chịu trách nhiệm ECR repository. Module `security/` chịu trách nhiệm GitHub OIDC Federation provider (đặt cùng `iam-cicd-role.tf` vì role và provider dùng chung, tránh phụ thuộc chéo module).
 
 **File ảnh hưởng:** `CLAUDE.md` mục 5, `terraform-structure.md` mục 2
 
@@ -125,7 +125,7 @@ Bucket bật versioning + encryption + block public access. Tạo 1 lần duy nh
 
 ### Q9 — Tag `Owner`
 
-Giá trị chính xác, không đổi: `Owner = "luong-van-vo"`. Truyền qua biến `owner` trong `terraform.tfvars` của từng environment, không hardcode trong module.
+Giá trị chính xác, không đổi: `Owner = "voluongdev"`. Truyền qua biến `owner` trong `terraform.tfvars` của từng environment, không hardcode trong module.
 
 **File ảnh hưởng:** `naming-tagging-standard.md` mục 3.1
 
@@ -573,6 +573,20 @@ y_bucket = min(int(position_field["y"] / (100/6)), 5)   # 100 /  6 buckets
 Read Replica (~$14/tháng) chỉ tính cho `staging`/`prod`. Môi trường `dev` giữ baseline tối ưu (không Replica, 1 NAT, Single-AZ). Bổ sung thêm dòng ECR storage và bucket `athena-results` vào bảng ước tính.
 
 **File ảnh hưởng:** `cost-estimate.md` mục 2.2 + 3
+
+---
+### Q35 — Tham số kỹ thuật RDS PostgreSQL & DynamoDB (module `database`)
+
+Các tham số sau không được đặc tả cụ thể ở `database-schema.md`/`terraform-structure.md`, chốt bổ sung ở đây:
+
+| Tham số | Quyết định |
+|---|---|
+| **RDS `engine_version`** | `16.4` |
+| **RDS `backup_retention_period`** | `7` (ngày) — dùng mặc định AWS Console, áp dụng mọi environment |
+| **RDS `deletion_protection`** | `false` — áp dụng cho **mọi environment** (dev/staging/prod). Đây là quyết định tạm thời do đặc thù dự án cá nhân/portfolio, ưu tiên khả năng `terraform destroy` nhanh khi cần dọn dẹp chi phí; có thể bật lại (`true`) cho staging/prod khi dự án tiến gần hơn tới mô hình vận hành thực tế |
+| **DynamoDB `billing_mode`** | `PAY_PER_REQUEST` (on-demand) — khối lượng ghi/đọc nhỏ, không cần capacity cố định, khớp tinh thần cost-saving ở `cost-estimate.md` |
+
+**File ảnh hưởng:** `infra/modules/database/rds.tf`, `infra/modules/database/dynamodb.tf`
 
 ---
 

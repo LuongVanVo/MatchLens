@@ -46,3 +46,10 @@ worker/models/*.onnx
 # Logs
 *.log
 logs/
+
+# Note
+NOTE.md
+
+# Lambda Build Artifacts
+/lambdas/*/package/
+/lambdas/*/*.zip
