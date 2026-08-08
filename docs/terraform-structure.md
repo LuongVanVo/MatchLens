@@ -114,7 +114,7 @@ modules/database/
 
 **Input chính:** `vpc_id`, `private_db_subnet_ids`, `db_instance_class`, `multi_az` (bool), `create_read_replica` (bool — dev = false, staging/prod = true), `environment`
 
-**Output chính:** `rds_master_endpoint`, `rds_replica_endpoint` (bằng `rds_master_endpoint` khi `create_read_replica = false`), `rds_secret_arn`, `dynamodb_table_name`, `dynamodb_table_arn`
+**Output chính:** `rds_master_endpoint`, `rds_replica_endpoint` (bằng `rds_master_endpoint` khi `create_read_replica = false`), `rds_secret_arn`, `rds_security_group_id` (SG rỗng, ingress rule được thêm sau ở `compute`/`messaging` — xem ghi chú circular dependency ở §3.6), `dynamodb_table_name`, `dynamodb_table_arn`
 
 **Identifier** (quyết định Q4): Master = `matchlens-{env}-postgres`, Read Replica = `matchlens-{env}-postgres-replica`.
 
@@ -186,7 +186,7 @@ modules/security/
 ├── iam-mediaconvert-role.tf        (trigger role + service role — quyết định Q21)
 ├── iam-glue-role.tf
 ├── iam-cicd-role.tf                (OIDC provider có thể đặt ở modules/cicd)
-├── secrets-manager.tf              (db-credentials, jwt-keypair, cloudfront-signing-key)
+├── secrets-manager.tf              (jwt-keypair, cloudfront-signing-key — db-credentials-secret được tạo ở modules/database vì RDS cần password ngay lúc khởi tạo)
 ├── security-hub.tf
 ├── aws-config.tf
 ├── guardduty.tf
@@ -196,9 +196,9 @@ modules/security/
 └── README.md
 ```
 
-**Input chính:** danh sách resource ARN cụ thể mà từng role cần quyền truy cập (nhận từ output của các module khác — network, storage, database, messaging)
+**Input chính:** danh sách resource ARN cụ thể mà từng role cần quyền truy cập (nhận từ output của các module khác — network, storage, database, messaging), bao gồm `db_secret_arn` (= `module.database.rds_secret_arn`) để cấp quyền `secretsmanager:GetSecretValue` cho `iam-backend-role.tf` và `iam-status-updater-role.tf`
 
-**Output chính:** `backend_task_role_arn`, `worker_task_role_arn`, `dispatcher_role_arn`, `status_updater_role_arn`, `mediaconvert_trigger_role_arn`, `mediaconvert_role_arn`, `glue_role_arn`, `cicd_role_arn`, `db_secret_arn`, `jwt_keypair_secret_arn`, `cloudfront_signing_key_secret_arn`
+**Output chính:** `backend_task_role_arn`, `worker_task_role_arn`, `dispatcher_role_arn`, `status_updater_role_arn`, `mediaconvert_trigger_role_arn`, `mediaconvert_role_arn`, `glue_role_arn`, `cicd_role_arn`, `jwt_keypair_secret_arn`, `cloudfront_signing_key_secret_arn`
 
 **Ghi chú quan trọng:** module này phụ thuộc (depends_on) vào output của storage/database/messaging vì cần biết chính xác ARN resource để viết policy least-privilege — cần chú ý thứ tự apply hoặc dùng `data` source hợp lý để tránh circular dependency.
 
@@ -245,14 +245,14 @@ Chỉ có `README.md` ghi chú *"Reserved for Phase 6 (Glue / Athena / QuickSigh
 
 ### 3.8. `modules/cicd/`
 
-**Chịu trách nhiệm:** ECR repository, GitHub OIDC Identity Provider (nếu không đặt chung với security module).
+**Chịu trách nhiệm:** ECR repository (GitHub OIDC Identity Provider được đặt ở `modules/security` cùng `iam-cicd-role.tf`).
 
 ```
 modules/cicd/
 ├── ecr.tf
-├── github-oidc.tf
 ├── variables.tf
 ├── outputs.tf
+├── versions.tf
 └── README.md
 ```
 
@@ -396,7 +396,7 @@ provider "aws" {
       Project     = "MatchLens"
       Environment = var.environment
       ManagedBy   = "Terraform"
-      Owner       = var.owner   # "luong-van-vo"
+      Owner       = var.owner   # "voluongdev"
       CostCenter  = "matchlens-project"
     }
   }

@@ -123,9 +123,9 @@ MatchLens/
 │   │   ├── database/                # RDS PostgreSQL (Master, Standby, Read Replica có điều kiện) & DynamoDB
 │   │   ├── storage/                 # 5 S3 Buckets, CloudFront + OAC + Key Group, WAF
 │   │   ├── messaging/               # 2 SQS Queue + 2 DLQ, 3 Lambda, S3 Event Notification
-│   │   ├── security/                # 8 IAM Role least-privilege, ACM, Secrets Manager (3 secret), Security Hub, Config, GuardDuty
+│   │   ├── security/                # 8 IAM Role least-privilege, ACM, Secrets Manager (2 secret), GitHub OIDC Provider, Security Hub, Config, GuardDuty
 │   │   ├── observability/           # CloudWatch Dashboards, Alarms, SNS, AWS Budget, EventBridge auto-shutdown
-│   │   ├── cicd/                    # ECR repository, GitHub OIDC Provider
+│   │   ├── cicd/                    # ECR repository
 │   │   └── analytics/               # STUB — chỉ có README, reserved cho Phase 6 (Glue/Athena/QuickSight)
 │   ├── environments/
 │   │   ├── dev/

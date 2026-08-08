@@ -96,7 +96,7 @@ matchlens-{env}-athena-results
 | `Project` | `MatchLens` | Nhận diện dự án, phục vụ cost allocation report |
 | `Environment` | `dev` / `staging` / `prod` | Phân biệt môi trường, dùng trong IAM condition nếu cần |
 | `ManagedBy` | `Terraform` | Đánh dấu resource được quản lý bằng IaC, tránh sửa tay nhầm |
-| `Owner` | Tên hoặc email người chịu trách nhiệm (ví dụ `luong-van-vo`) | Xác định người liên hệ khi có sự cố |
+| `Owner` | Tên hoặc email người chịu trách nhiệm (ví dụ `voluongdev`) | Xác định người liên hệ khi có sự cố |
 | `CostCenter` | `matchlens-project` | Phục vụ AWS Cost Explorer lọc theo tag |
 
 ### 3.2. Tag khuyến nghị (Optional nhưng nên có) — theo từng nhóm resource
@@ -115,7 +115,7 @@ Ví dụ RDS instance môi trường prod:
 Project             = MatchLens
 Environment         = prod
 ManagedBy           = Terraform
-Owner               = luong-van-vo
+Owner               = voluongdev
 CostCenter          = matchlens-project
 Component           = database
 DataClassification  = confidential
