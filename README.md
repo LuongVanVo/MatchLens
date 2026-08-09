@@ -1,53 +1,65 @@
-# MatchLens
+# MatchLens ⚽🔍
 
-> Nền tảng phân tích trận đấu bóng đá: tự động cắt highlight bằng AI (YOLOv11) và phân tích chỉ số cầu thủ, giúp huấn luyện viên chuẩn bị chiến thuật cho trận tiếp theo.
+<p align="center">
+  <img src="https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white" />
+  <img src="https://img.shields.io/badge/NestJS-E0234E?style=for-the-badge&logo=nestjs&logoColor=white" />
+  <img src="https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white" />
+  <img src="https://img.shields.io/badge/PostgreSQL-316192?style=for-the-badge&logo=postgresql&logoColor=white" />
+  <img src="https://img.shields.io/badge/Prisma-2D3748?style=for-the-badge&logo=prisma&logoColor=white" />
+  <img src="https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white" />
+  <img src="https://img.shields.io/badge/AWS-232F3E?style=for-the-badge&logo=amazon-aws&logoColor=white" />
+  <img src="https://img.shields.io/badge/Terraform-7B42BC?style=for-the-badge&logo=terraform&logoColor=white" />
+  <img src="https://img.shields.io/badge/GitHub_Actions-2088FF?style=for-the-badge&logo=github-actions&logoColor=white" />
+</p>
 
-## Giới thiệu
+> A football match analytics platform: automatic highlight extraction using AI (YOLOv11) and player metrics analysis, helping coaches prepare tactics for their next matches.
 
-MatchLens giúp các đội bóng phong trào/nghiệp dư — vốn không có ngân sách cho phần mềm phân tích chuyên nghiệp — có thể upload video trận đấu, tự động nhận được các đoạn highlight, và xem báo cáo chỉ số vận động của cầu thủ (heatmap, quãng đường di chuyển, tốc độ).
+## 📖 Introduction
 
-Đây là dự án cá nhân được xây dựng với trọng tâm là **hạ tầng AWS chuẩn production**: Infrastructure as Code, bảo mật theo nguyên tắc least-privilege, CI/CD tự động, giám sát/observability, và khả năng phục hồi sau sự cố (DR) — không chỉ đơn thuần là một ứng dụng chạy được.
+MatchLens empowers amateur and grassroots football teams—who lack the budget for professional analysis software—to upload match videos, automatically receive highlight clips, and view comprehensive player movement reports (heatmaps, distance covered, sprint speeds).
 
-## Kiến trúc
+This is a personal project built with a strong emphasis on **production-grade AWS infrastructure**: Infrastructure as Code (IaC), least-privilege security principles, automated CI/CD, observability, and disaster recovery (DR) capabilities—moving far beyond a simple functional application.
 
-Xem chi tiết tại [`docs/architecture.md`](docs/architecture.md).
+## 🏛️ Architecture
 
-Tổng quan: Video được upload trực tiếp lên S3 qua presigned URL, kích hoạt pipeline xử lý bất đồng bộ (SQS → ECS Fargate Worker chạy YOLOv11) để cắt highlight và trích xuất dữ liệu tracking. Dữ liệu tracking sau đó được xử lý qua AWS Glue để tính toán chỉ số cầu thủ, truy vấn qua Athena và hiển thị trên dashboard.
+For a detailed view, see [`docs/architecture.md`](docs/architecture.md).
 
-## Tech Stack
+**Overview:** Videos are uploaded directly to S3 via presigned URLs, triggering an asynchronous processing pipeline (SQS → ECS Fargate Worker running YOLOv11) to extract highlights and tracking data. The tracking data is then processed via AWS Glue to calculate player metrics, queried via Athena, and displayed on the dashboard.
 
-- **Backend:** NestJS (Node 22 + pnpm + Prisma 6), chạy trên ECS Fargate
-- **AI:** YOLOv11 (object detection) + ByteTrack/BoT-SORT (multi-object tracking) + OpenCV (homography)
-- **Database:** PostgreSQL (RDS Multi-AZ + Read Replica), DynamoDB
-- **Storage:** S3 (data lake: raw → processed → curated)
-- **Serverless:** Lambda (job dispatcher, status updater, MediaConvert trigger)
-- **IaC:** Terraform (8 module, 3 environment)
+## 💻 Tech Stack
+
+- **Backend:** NestJS (Node.js 22 + pnpm + Prisma 7.9), running on Amazon ECS Fargate
+- **AI/CV:** YOLOv11 (object detection) + ByteTrack/BoT-SORT (multi-object tracking) + OpenCV (homography)
+- **Database:** PostgreSQL (RDS Multi-AZ + Read Replica), Amazon DynamoDB
+- **Storage:** Amazon S3 (Data Lake architecture: raw → processed → curated)
+- **Serverless:** AWS Lambda (job dispatcher, status updater, MediaConvert trigger)
+- **IaC:** Terraform (8 modules, 3 environments)
 - **CI/CD:** GitHub Actions (OIDC) + Amazon ECR + Trivy
-- **Data & Analytics:** AWS Glue, Athena
-- **Observability:** CloudWatch, SNS, AWS Budget
+- **Data & Analytics:** AWS Glue, Amazon Athena
+- **Observability:** Amazon CloudWatch, SNS, AWS Budgets
 
-## Giới hạn đã biết của phiên bản hiện tại
+## ⚠️ Known Limitations (Current Version)
 
-Đây là các đơn giản hóa **có chủ đích** để tập trung vào phần hạ tầng — không phải thiếu sót do bỏ qua:
+These are **intentional** simplifications to maintain focus on the core infrastructure, not accidental omissions:
 
-| Giới hạn | Chi tiết | Hướng mở rộng |
+| Limitation | Details | Future Extension |
 |---|---|---|
-| **Camera tĩnh** | Việc quy đổi tọa độ pixel → tọa độ sân dùng homography với 4 điểm mốc cấu hình trước, nên chỉ hoạt động với camera chiến thuật đặt cố định. Không xử lý được footage truyền hình (camera pan/zoom) | Camera calibration động theo từng frame |
-| **Không nhận diện số áo** | AI không OCR số áo. Tracker sinh `track_id` (Track #1, #2...) bền vững trong 1 trận; huấn luyện viên gán thủ công `track_id → cầu thủ` qua giao diện | OCR số áo hoặc re-identification model |
-| **Chưa quét virus file upload** | Hiện chỉ validate content-type và kích thước file khi cấp presigned URL | ClamAV trên Lambda, hoặc GuardDuty Malware Protection for S3 |
-| **Phạm vi 1 trận đấu** | Chưa có tính năng tổng hợp nhiều trận / cả mùa giải | Mở rộng sau khi phần lõi ổn định |
+| **Static Camera Only** | Pixel-to-pitch coordinate conversion uses homography with 4 pre-configured reference points, requiring a fixed tactical camera. Cannot process broadcast footage (pan/zoom cameras). | Dynamic camera calibration per frame. |
+| **No Jersey Number Recognition** | AI does not perform OCR on jersey numbers. The tracker generates persistent `track_ids` (Track #1, #2...) for a match; coaches manually map `track_id → player` via the UI. | OCR jersey recognition or re-identification models. |
+| **No Malware Scanning on Uploads** | Currently only validates content-type and file size when issuing presigned URLs. | ClamAV on Lambda, or GuardDuty Malware Protection for S3. |
+| **Single Match Scope** | No feature yet for aggregating data across multiple matches or an entire season. | Expansion after the core pipeline stabilizes. |
 
-## Tài liệu thiết kế
+## 📚 Design Documentation
 
-Toàn bộ quá trình thiết kế trước khi triển khai được lưu tại [`docs/`](docs/):
+The entire design process prior to implementation is documented in the [`docs/`](docs/) directory:
 
-- **[⭐ Architectural Decision Record (ADR)](docs/decision-record.md)** — nguồn chân lý: 39 quyết định kiến trúc đã chốt kèm lý do và đánh đổi
-- [Kiến trúc hạ tầng (Infrastructure Architecture)](docs/architecture.md)
-- [Roadmap triển khai chi tiết (Deployment Roadmap)](docs/roadmap.md)
-- [Kiến trúc Backend NestJS (Backend Architecture)](docs/backend-architecture.md)
-- [Cấu trúc Database & ERD (Database Schema)](docs/database-schema.md)
-- [Thỏa thuận Dữ liệu I/O (Data Contracts - AI & Glue)](docs/data-contracts.md)
-- [Luồng hệ thống (System Flows)](docs/system-flows.md)
+- **[⭐ Architectural Decision Record (ADR)](docs/decision-record.md)** — The source of truth: 39 finalized architectural decisions with rationale and trade-offs.
+- [Infrastructure Architecture](docs/architecture.md)
+- [Deployment Roadmap](docs/roadmap.md)
+- [Backend Architecture](docs/backend-architecture.md)
+- [Database Schema & ERD](docs/database-schema.md)
+- [Data Contracts (AI & Glue)](docs/data-contracts.md)
+- [System Flows](docs/system-flows.md)
 - [Data Model & S3 Strategy](docs/data-model.md)
 - [API Design](docs/api-design.md)
 - [IAM & Security Design](docs/iam-security-design.md)
@@ -56,11 +68,10 @@ Toàn bộ quá trình thiết kế trước khi triển khai được lưu tạ
 - [CI/CD Design](docs/cicd-design.md)
 - [Cost Estimate](docs/cost-estimate.md)
 
-## Trạng thái dự án
+## 🚀 Project Status
 
-Design Phase hoàn thành, đã chốt toàn bộ quyết định kiến trúc. Đang bắt đầu Phase 0 (nền tảng ứng dụng + hạ tầng cơ bản). Xem tiến độ chi tiết theo từng Phase tại [`docs/roadmap.md`](docs/roadmap.md).
+The Design Phase is complete, with all architectural decisions finalized. Currently executing **Phase 0** (application foundation + core infrastructure). See detailed progress per phase in [`docs/roadmap.md`](docs/roadmap.md).
 
-## Giấy phép
+## 📄 License
 
-Dự án cá nhân, phục vụ mục đích học tập và portfolio.
-
+This is a personal project intended for learning purposes and portfolio showcasing.
