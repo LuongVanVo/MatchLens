@@ -35,6 +35,11 @@ worker/models/*.onnx
 # IDE / Editor
 .vscode/
 .idea/
+.agents/
+.claude/
+.winsuft/
+.windsurf/
+generated/
 *.swp
 .DS_Store
 
@@ -42,13 +47,15 @@ worker/models/*.onnx
 .aws/
 *.pem
 *credentials*
+keys
 
 # Logs
 *.log
 logs/
 
-# Note
-NOTE.md
+# Note & docs
+/diagrams/*
+/knowledge/*
 
 # Lambda Build Artifacts
 /lambdas/*/package/
