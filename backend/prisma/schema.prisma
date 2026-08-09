@@ -1,0 +1,122 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum MatchStatus {
+  pending
+  uploaded
+  processing
+  completed
+  failed
+}
+
+model User {
+  id           String    @id @default(uuid()) @db.Uuid
+  email        String    @unique(map: "idx_users_email") @db.VarChar(255)
+  passwordHash String    @map("password_hash") @db.VarChar(255)
+  fullName     String    @map("full_name") @db.VarChar(255)
+  role         String    @default("coach") @db.VarChar(50)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz
+
+  teams         Team[]
+  refreshTokens RefreshToken[]
+
+  @@map("users")
+}
+
+model Team {
+  id        String    @id @default(uuid()) @db.Uuid
+  ownerId   String    @map("owner_id") @db.Uuid
+  name      String    @db.VarChar(255)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz
+
+  owner   User     @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  players Player[]
+  matches Match[]
+
+  @@index([ownerId], map: "idx_teams_owner_id")
+  @@map("teams")
+}
+
+model Player {
+  id           String    @id @default(uuid()) @db.Uuid
+  teamId       String    @map("team_id") @db.Uuid
+  fullName     String    @map("full_name") @db.VarChar(255)
+  jerseyNumber Int?      @map("jersey_number") @db.SmallInt
+  position     String?   @db.VarChar(50)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz
+
+  team          Team                @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  trackMappings MatchTrackMapping[]
+
+  @@index([teamId], map: "idx_players_team_id")
+  @@map("players")
+}
+
+model Match {
+  id           String      @id @default(uuid()) @db.Uuid
+  teamId       String      @map("team_id") @db.Uuid
+  opponentName String      @map("opponent_name") @db.VarChar(255)
+  matchDate    DateTime    @map("match_date") @db.Date
+  videoS3Key   String?     @map("video_s3_key") @db.VarChar(512)
+  durationSec  Int?        @map("duration_sec")
+  status       MatchStatus @default(pending)
+  errorMessage String?     @map("error_message") @db.Text
+  createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime    @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt    DateTime?   @map("deleted_at") @db.Timestamptz
+
+  team          Team                @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  trackMappings MatchTrackMapping[]
+
+  @@index([teamId], map: "idx_matches_team_id")
+  @@index([status], map: "idx_matches_status")
+  @@map("matches")
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique(map: "idx_refresh_tokens_hash") @map("token_hash") @db.VarChar(255)
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "idx_refresh_tokens_user_id")
+  @@map("refresh_tokens")
+}
+
+model MatchTrackMapping {
+  id        String   @id @default(uuid()) @db.Uuid
+  matchId   String   @map("match_id") @db.Uuid
+  trackId   Int      @map("track_id")
+  playerId  String?  @map("player_id") @db.Uuid
+  teamSide  String   @map("team_side") @db.VarChar(10)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  match  Match   @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  player Player? @relation(fields: [playerId], references: [id], onDelete: SetNull)
+
+  @@unique([matchId, trackId], map: "idx_track_mappings_match_track")
+  @@index([playerId], map: "idx_track_mappings_player_id")
+  @@map("match_track_mappings")
+}
