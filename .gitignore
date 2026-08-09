@@ -54,7 +54,7 @@ keys
 logs/
 
 # Note & docs
-/diagrams/*
+diagrams
 /knowledge/*
 
 # Lambda Build Artifacts
