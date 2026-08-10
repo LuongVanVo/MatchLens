@@ -1,9 +1,9 @@
-import { NestFactory } from '@nestjs/core';
-import { AppModule } from './app.module';
-import { ValidationPipe } from '@nestjs/common';
-import { TransformInterceptor } from './common/interceptors/transform.interceptor';
-import { HttpExceptionFilter } from './common/filters/http-exception.filter';
+import { ClassSerializerInterceptor, ValidationPipe } from '@nestjs/common';
+import { NestFactory, Reflector } from '@nestjs/core';
 import cookieParser from 'cookie-parser';
+import { AppModule } from './app.module';
+import { HttpExceptionFilter } from './common/filters/http-exception.filter';
+import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -20,16 +20,24 @@ async function bootstrap() {
       transform: true,
       forbidNonWhitelisted: true,
       transformOptions: {
-        enableImplicitConversion: false
+        enableImplicitConversion: false,
       },
     }),
   );
 
-  app.useGlobalInterceptors(new TransformInterceptor())
-  app.useGlobalFilters(new HttpExceptionFilter())
+  const reflector = app.get(Reflector);
 
-  // CORS
-  app.enableCors();
+  app.useGlobalInterceptors(
+    new ClassSerializerInterceptor(reflector),
+    new TransformInterceptor(),
+  );
+
+  app.useGlobalFilters(new HttpExceptionFilter());
+
+  app.enableCors({
+    origin: true,
+    credentials: true,
+  });
 
   app.enableShutdownHooks();
 
