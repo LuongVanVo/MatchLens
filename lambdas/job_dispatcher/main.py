@@ -34,13 +34,13 @@ def build_job_message(match_id: str, team_id: str, bucket: str, key: str, event_
         "uploaded_at": event_time
     }
 
-def build_status_callback(match_id: str, status: str) -> dict[str, Any]:
+def build_status_callback(match_id: str, status: str, emitted_at: str | None) -> dict[str, Any]:
     return {
         "match_id": match_id,
         "status": status,
         "reason": None,
         "duration_sec": None,
-        "emitted_at": None,
+        "emitted_at": emitted_at,
     }
 
 def send_message(queue_url: str, payload: dict[str, Any]) -> None:
@@ -88,7 +88,7 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, int]:
         )
         send_message(VIDEO_PROCESSING_QUEUE_URL, job_message)
 
-        status_message = build_status_callback(match_id=match_id, status="processing")
+        status_message = build_status_callback(match_id=match_id, status="processing", emitted_at=event_time)
         send_message(STATUS_CALLBACKS_QUEUE_URL, status_message)
 
         processed += 1

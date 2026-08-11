@@ -4,6 +4,7 @@ resource "aws_s3_bucket_notification" "raw_videos" {
   lambda_function {
     lambda_function_arn = aws_lambda_function.job_dispatcher.arn
     events              = ["s3:ObjectCreated:*"]
+    filter_prefix = "original.mp4"
   }
 
   depends_on = [

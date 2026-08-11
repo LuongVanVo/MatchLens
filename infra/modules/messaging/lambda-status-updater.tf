@@ -10,6 +10,13 @@ resource "aws_security_group" "status_updater_lambda" {
     security_groups = [var.rds_security_group_id]
   }
 
+  egress {
+    from_port = 443
+    to_port = 443
+    protocol = "tcp"
+    cidr_blocks = [ "0.0.0.0/0" ]
+  }
+
   tags = merge(
     local.common_component_tags,
     local.status_updater_service_tags,
@@ -37,7 +44,6 @@ resource "aws_lambda_function" "status_updater" {
 
   environment {
     variables = {
-      STATUS_CALLBACKS_QUEUE_URL = aws_sqs_queue.status_callbacks.id
       DB_SECRET_ARN              = var.db_secret_arn
     }
   }
