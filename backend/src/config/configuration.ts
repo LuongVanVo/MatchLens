@@ -11,6 +11,8 @@ export default () => ({
     },
     aws: {
         region: process.env.AWS_REGION,
+        rawVideosBucket: process.env.S3_RAW_VIDEOS_BUCKET,
+        uploadUrlExpiresInSeconds: Number(process.env.UPLOAD_URL_EXPIRES_IN_SECONDS ?? 900),
     },
     auth: {
         accessTokenExpiresIn: process.env.JWT_ACCESS_TOKEN_EXPIRES_IN,
@@ -18,6 +20,11 @@ export default () => ({
         jwtKeypairSecretName: process.env.JWT_KEYPAIR_SECRET_NAME,
         jwtPrivateKeyPath: process.env.JWT_PRIVATE_KEY_PATH,
         jwtPublicKeyPath: process.env.JWT_PUBLIC_KEY_PATH,
+    },
+    upload: {
+        maxUploadSizeBytes: Number(process.env.MAX_UPLOAD_SIZE_BYTES ?? 2147483648),
+        rateLimitTtlSeconds: Number(process.env.UPLOAD_RATE_LIMIT_TTL_SECONDS ?? 60),
+        rateLimitLimit: Number(process.env.UPLOAD_RATE_LIMIT_LIMIT ?? 10),
     },
     throttle: {
         ttl: Number(process.env.THROTTLE_TTL ?? 60),
