@@ -15,6 +15,11 @@ export const validationSchema = Joi.object({
     DATABASE_URL_REPLICA: Joi.string().uri({ scheme: ['postgresql', 'postgres'] }).required(),
 
     AWS_REGION: Joi.string().required(),
+    S3_RAW_VIDEOS_BUCKET: Joi.string().required(),
+    UPLOAD_URL_EXPIRES_IN_SECONDS: Joi.number().integer().positive().default(900),
+    MAX_UPLOAD_SIZE_BYTES: Joi.number().integer().positive().default(2147483648),
+    UPLOAD_RATE_LIMIT_TTL_SECONDS: Joi.number().integer().positive().default(60),
+    UPLOAD_RATE_LIMIT_LIMIT: Joi.number().integer().positive().default(10),
 
     JWT_ACCESS_TOKEN_EXPIRES_IN: Joi.string().required(),
     JWT_REFRESH_TOKEN_EXPIRES_IN: Joi.string().required(),

@@ -48,6 +48,8 @@ generated/
 *.pem
 *credentials*
 keys
+access-key
+s3-backup
 
 # Logs
 *.log

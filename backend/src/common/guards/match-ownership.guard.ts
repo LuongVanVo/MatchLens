@@ -1,5 +1,4 @@
 import { CanActivate, ExecutionContext, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import { Observable } from "rxjs";
 import { PrismaService } from "src/prisma/prisma.service";
 
 @Injectable()
@@ -13,7 +12,16 @@ export class MatchOwnershipGuard implements CanActivate {
 
         const match = await this.prisma.write.match.findFirst({
             where: { id: matchId, deletedAt: null },
-            select: { id: true, team: { select: { ownerId: true } } },
+            select: {
+                id: true,
+                teamId: true,
+                status: true,
+                team: {
+                    select: {
+                        ownerId: true,
+                    },
+                },
+            },
         });
 
         if (!match) {
