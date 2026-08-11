@@ -100,7 +100,7 @@ module "compute" {
   raw_tracking_bucket_name         = module.storage.raw_tracking_bucket_name
   dynamodb_table_name              = module.database.dynamodb_table_name
 
-  enable_worker_service       = false
+  enable_worker_service       = true
   video_processing_queue_url  = module.messaging.video_processing_queue_url
   video_processing_queue_arn  = module.messaging.video_processing_queue_arn
   video_processing_queue_name = module.messaging.video_processing_queue_name

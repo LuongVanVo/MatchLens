@@ -91,21 +91,22 @@ data "aws_iam_policy_document" "mediaconvert_trigger_lambda_policy" {
     resources = ["${var.processed_highlights_bucket_arn}/raw-clips/*"]
   }
 
-  statement {
-    sid    = "AllowWriteFinalHightlights"
-    effect = "Allow"
-    actions = [
-      "s3:PutObject"
-    ]
-    resources = ["${var.processed_highlights_bucket_arn}/clips/*"]
-  }
+  # statement {
+  #   sid    = "AllowWriteFinalHightlights"
+  #   effect = "Allow"
+  #   actions = [
+  #     "s3:PutObject"
+  #   ]
+  #   resources = ["${var.processed_highlights_bucket_arn}/clips/*"]
+  # }
 
   statement {
     sid    = "AllowMediaConvertJobManagement"
     effect = "Allow"
     actions = [
       "mediaconvert:CreateJob",
-      "mediaconvert:GetJob"
+      "mediaconvert:GetJob",
+      "mediaconvert:DescribeEndpoints"
     ]
     resources = ["*"]
   }

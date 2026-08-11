@@ -23,14 +23,14 @@ resource "aws_iam_role" "dispatcher_lambda" {
 }
 
 data "aws_iam_policy_document" "dispatcher_task_policy" {
-  statement {
-    sid    = "AllowReadUploadedVideoMetadata"
-    effect = "Allow"
-    actions = [
-      "s3:GetObject"
-    ]
-    resources = ["${var.raw_videos_bucket_arn}/*"]
-  }
+  # statement {
+  #   sid    = "AllowReadUploadedVideoMetadata"
+  #   effect = "Allow"
+  #   actions = [
+  #     "s3:GetObject"
+  #   ]
+  #   resources = ["${var.raw_videos_bucket_arn}/*"]
+  # }
 
   statement {
     sid    = "AllowSendVideoJobsQueue"

@@ -12,6 +12,7 @@ resource "aws_sqs_queue" "video_processing_dlq" {
 resource "aws_sqs_queue" "video_processing_jobs" {
   name                      = local.video_jobs_queue_name
   message_retention_seconds = 345600 # 4 days
+  visibility_timeout_seconds = var.visibility_timeout
 
   redrive_policy = jsonencode({
     deadLetterTargetArn = aws_sqs_queue.video_processing_dlq.arn
