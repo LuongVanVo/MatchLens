@@ -1,0 +1,2 @@
+# Thư mục chứa file weights YOLOv11 (.pt / .onnx)
+# File weights KHÔNG commit vào git (xem .gitignore) — tải về khi build image hoặc mount từ S3.
